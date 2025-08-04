@@ -7,9 +7,9 @@ import (
 	"log"
 	"os"
 
-	"github.com/charmbracelet/vhs/lexer"
-	"github.com/charmbracelet/vhs/parser"
-	"github.com/charmbracelet/vhs/token"
+	"github.com/agentstation/vhs/lexer"
+	"github.com/agentstation/vhs/parser"
+	"github.com/agentstation/vhs/token"
 	"github.com/go-rod/rod"
 )
 
@@ -155,7 +155,7 @@ func Evaluate(ctx context.Context, tape string, out io.Writer, opts ...Evaluator
 		isSetting := cmd.Type == token.SET && cmd.Options != "TypingSpeed"
 
 		if isSetting {
-			fmt.Println(ErrorStyle.Render(fmt.Sprintf("WARN: 'Set %s %s' has been ignored. Move the directive to the top of the file.\nLearn more: https://github.com/charmbracelet/vhs#settings", cmd.Options, cmd.Args)))
+			fmt.Println(ErrorStyle.Render(fmt.Sprintf("WARN: 'Set %s %s' has been ignored. Move the directive to the top of the file.\nLearn more: https://github.com/agentstation/vhs#settings", cmd.Options, cmd.Args)))
 		}
 		if isSetting || cmd.Type == token.REQUIRE {
 			_, _ = fmt.Fprintln(out, Highlight(cmd, true))

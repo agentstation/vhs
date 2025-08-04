@@ -7,7 +7,7 @@ includes:
 variables:
   main: "."
   description: "A tool for recording terminal GIFs"
-  github_url: "https://github.com/charmbracelet/vhs"
+  github_url: "https://github.com/agentstation/vhs"
   maintainer: "Maas Lalani <maas@charm.sh>"
   brew_commit_author_name: "Maas Lalani"
   brew_commit_author_email: "maas@charm.sh"

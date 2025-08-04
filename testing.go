@@ -66,8 +66,8 @@ func (v *VHS) SaveOutput() error {
 
 // Buffer returns the current buffer.
 func (v *VHS) Buffer() ([]string, error) {
-	// Get the current buffer.
-	buf, err := v.Page.Eval("() => Array(term.rows).fill(0).map((e, i) => term.buffer.active.getLine(i).translateToString().trimEnd())")
+	// Get the current buffer with viewport offset to handle scrolling.
+	buf, err := v.Page.Eval("() => Array(term.rows).fill(0).map((e, i) => term.buffer.active.getLine(i + term.buffer.active.viewportY)?.translateToString().trimEnd() || '')")
 	if err != nil {
 		return nil, fmt.Errorf("read buffer: %w", err)
 	}

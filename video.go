@@ -26,6 +26,7 @@ const (
 	mp4  = ".mp4"
 	webm = ".webm"
 	gif  = ".gif"
+	svg  = ".svg"
 )
 
 // randomDir returns a random temporary directory to be used for storing frames
@@ -45,6 +46,7 @@ type VideoOutputs struct {
 	WebM   string
 	MP4    string
 	Frames string
+	SVG    string
 }
 
 // VideoOptions is the set of options for converting frames to a GIF.
@@ -70,7 +72,7 @@ func DefaultVideoOptions() VideoOptions {
 		Framerate:     defaultFramerate,
 		Input:         randomDir(),
 		MaxColors:     defaultMaxColors,
-		Output:        VideoOutputs{GIF: "", WebM: "", MP4: "", Frames: ""},
+		Output:        VideoOutputs{GIF: "", WebM: "", MP4: "", Frames: "", SVG: ""},
 		PlaybackSpeed: defaultPlaybackSpeed,
 		StartingFrame: defaultStartingFrame,
 	}
@@ -165,4 +167,41 @@ func MakeWebM(opts VideoOptions) *exec.Cmd {
 // MakeMP4 takes a list of images (as frames) and converts them to an MP4.
 func MakeMP4(opts VideoOptions) *exec.Cmd {
 	return makeMedia(opts, opts.Output.MP4)
+}
+
+// MakeSVG generates an animated SVG from captured frames.
+func MakeSVG(v *VHS) error {
+	if v.Options.Video.Output.SVG == "" || len(v.svgFrames) == 0 {
+		return nil
+	}
+
+	log.Println(GrayStyle.Render("Creating " + v.Options.Video.Output.SVG + "..."))
+	ensureDir(v.Options.Video.Output.SVG)
+
+	// Calculate total duration based on frame count and framerate
+	duration := float64(len(v.svgFrames)) / float64(v.Options.Video.Framerate)
+
+	// Create SVG options
+	svgOpts := SVGOptions{
+		Width:      v.Options.Video.Style.Width,
+		Height:     v.Options.Video.Style.Height,
+		FontSize:   v.Options.FontSize,
+		FontFamily: v.Options.FontFamily,
+		Theme:      v.Options.Theme,
+		Frames:     v.svgFrames,
+		Duration:   duration,
+		Style:      v.Options.Video.Style,
+	}
+
+	// Generate SVG
+	generator := NewSVGGenerator(svgOpts)
+	svgContent := generator.Generate()
+
+	// Write to file
+	err := os.WriteFile(v.Options.Video.Output.SVG, []byte(svgContent), 0o644)
+	if err != nil {
+		return fmt.Errorf("failed to write SVG file: %w", err)
+	}
+
+	return nil
 }

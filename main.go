@@ -17,8 +17,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/charmbracelet/vhs/lexer"
-	"github.com/charmbracelet/vhs/parser"
+	"github.com/agentstation/vhs/lexer"
+	"github.com/agentstation/vhs/parser"
 	version "github.com/hashicorp/go-version"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
@@ -104,6 +104,8 @@ var (
 						v.Options.Video.Output.WebM = output
 					} else if strings.HasSuffix(output, mp4) {
 						v.Options.Video.Output.MP4 = output
+					} else if strings.HasSuffix(output, svg) {
+						v.Options.Video.Output.SVG = output
 					}
 				}
 

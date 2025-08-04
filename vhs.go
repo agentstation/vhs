@@ -33,6 +33,7 @@ type VHS struct {
 	tty          *exec.Cmd
 	totalFrames  int
 	close        func() error
+	svgFrames    []SVGFrame
 }
 
 // Options is the set of options for the setup.
@@ -243,6 +244,11 @@ func (vhs *VHS) Render() error {
 		}
 	}
 
+	// Generate SVG if requested
+	if err := MakeSVG(vhs); err != nil {
+		return fmt.Errorf("failed to generate SVG: %w", err)
+	}
+
 	return nil
 }
 
@@ -374,6 +380,104 @@ func (vhs *VHS) Record(ctx context.Context) <-chan error {
 				); err != nil {
 					ch <- fmt.Errorf("error writing text frame: %w", err)
 					continue
+				}
+
+				// Capture SVG frame data if SVG output is requested
+				if vhs.Options.Video.Output.SVG != "" {
+					lines, err := vhs.Buffer()
+					if err == nil {
+						// Get cursor position and exact character positions from xterm.js
+						termInfo, err := vhs.Page.Eval(`() => {
+							const buffer = term.buffer.active;
+							const cursorX = buffer.cursorX;
+							// Cursor Y is relative to the viewport (0 = top of visible area)
+							const cursorY = buffer.cursorY;
+							
+							// Get exact cursor pixel position
+							let cursorPixelX = 0;
+							let cursorPixelY = 0;
+							let charWidth = 0;
+							let charHeight = 0;
+							let letterSpacing = term.options.letterSpacing || 0;
+							
+							// Get dimensions from the rendered canvas
+							// This is the most reliable source as it represents the actual rendered output
+							const textCanvas = document.querySelector('canvas.xterm-text-layer');
+							const cols = term.cols;
+							const rows = term.rows;
+							charWidth = textCanvas.width / cols;
+							charHeight = textCanvas.height / rows;
+							cursorPixelX = cursorX * charWidth;
+							cursorPixelY = cursorY * charHeight;
+							
+							// Get the current line's text and calculate each character position
+							// Note: cursorY is already relative to viewport, so we need to add viewportY to get absolute line
+							const line = buffer.getLine(cursorY + buffer.viewportY);
+							const charPositions = [];
+							if (line) {
+								const text = line.translateToString();
+								// xterm.js positions characters at cell boundaries
+								// The base cell width already includes letter spacing
+								for (let i = 0; i < text.length; i++) {
+									// Each character is positioned at its cell index * cell width
+									const baseX = i * charWidth;
+									charPositions.push({
+										char: text[i],
+										x: baseX
+									});
+								}
+							}
+							
+							return {
+								cursorX: cursorX,
+								cursorY: cursorY,
+								cursorPixelX: cursorPixelX,
+								cursorPixelY: cursorPixelY,
+								charWidth: charWidth,
+								charHeight: charHeight,
+								letterSpacing: letterSpacing,
+								charPositions: charPositions
+							};
+						}`)
+						if err == nil {
+							cursorX := int(termInfo.Value.Get("cursorX").Int())
+							cursorY := int(termInfo.Value.Get("cursorY").Int())
+							cursorPixelX := termInfo.Value.Get("cursorPixelX").Num()
+							cursorPixelY := termInfo.Value.Get("cursorPixelY").Num()
+							charWidth := termInfo.Value.Get("charWidth").Num()
+							charHeight := termInfo.Value.Get("charHeight").Num()
+							letterSpacing := termInfo.Value.Get("letterSpacing").Num()
+
+							// Convert character positions from termInfo
+							charPositions := []CharPosition{}
+							// Try to get character positions array
+							positionsJSON := termInfo.Value.Get("charPositions")
+							if !positionsJSON.Nil() {
+								// Get the array of positions
+								positions := positionsJSON.Arr()
+								for _, pos := range positions {
+									charPositions = append(charPositions, CharPosition{
+										Char: pos.Get("char").Str(),
+										X:    pos.Get("x").Num(),
+									})
+								}
+							}
+
+							svgFrame := SVGFrame{
+								Lines:         lines,
+								CursorX:       cursorX,
+								CursorY:       cursorY,
+								CursorPixelX:  cursorPixelX,
+								CursorPixelY:  cursorPixelY,
+								CharWidth:     charWidth,
+								CharHeight:    charHeight,
+								LetterSpacing: letterSpacing,
+								Timestamp:     float64(counter) / float64(vhs.Options.Video.Framerate),
+								CharPositions: charPositions,
+							}
+							vhs.svgFrames = append(vhs.svgFrames, svgFrame)
+						}
+					}
 				}
 
 				// Capture current frame and disable frame capturing

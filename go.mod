@@ -1,4 +1,4 @@
-module github.com/charmbracelet/vhs
+module github.com/agentstation/vhs
 
 go 1.24.1
 

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentstation/vhs/parser"
+	"github.com/agentstation/vhs/token"
 	"github.com/atotto/clipboard"
-	"github.com/charmbracelet/vhs/parser"
-	"github.com/charmbracelet/vhs/token"
 	"github.com/go-rod/rod/lib/input"
 )
 
@@ -366,6 +366,8 @@ func ExecuteOutput(c parser.Command, v *VHS) error {
 		v.Options.Video.Output.Frames = c.Args
 	case ".webm":
 		v.Options.Video.Output.WebM = c.Args
+	case ".svg":
+		v.Options.Video.Output.SVG = c.Args
 	default:
 		v.Options.Video.Output.GIF = c.Args
 	}
