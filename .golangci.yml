@@ -1,39 +1,18 @@
-# golangci-lint configuration v2
 version: "2"
-
 run:
-  timeout: 5m
   tests: false
-
-issues:
-  max-issues-per-linter: 0
-  max-same-issues: 0
-
 linters:
-  exclusions:
-    paths:
-      - "vendor/"
-      - "testdata/"
-  
   enable:
-    # Default linters
-    - govet
-    - errcheck
-    - staticcheck
-    - ineffassign
-    - unused
-    
-    # Code quality linters from original config
     - bodyclose
     - exhaustive
     - goconst
     - godot
     - gomoddirectives
     - goprintffuncname
-    # - gosec # Temporarily disabled - too many false positives for file operations
+    - gosec
     - misspell
     - nakedret
-    # - nestif # Temporarily disabled - code complexity warnings
+    - nestif
     - nilerr
     - noctx
     - nolintlint
@@ -46,3 +25,20 @@ linters:
     - unparam
     - whitespace
     - wrapcheck
+  exclusions:
+    rules:
+      - text: '(slog|log)\.\w+'
+        linters:
+          - noctx
+    generated: lax
+    presets:
+      - common-false-positives
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  exclusions:
+    generated: lax
