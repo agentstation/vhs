@@ -75,6 +75,7 @@ type StyleOptions struct {
 	FontSize            int    // Font size passed from VHS options
 	WindowBarFontFamily string // Font family specifically for window bar title
 	WindowBarFontSize   int    // Font size specifically for window bar title
+	ProgressBarColor    string // Color for progress bar (empty = no bar)
 }
 
 // DefaultStyleOptions returns default Style config.

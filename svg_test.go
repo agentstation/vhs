@@ -1478,3 +1478,73 @@ func TestSVGGenerator_TypingAnimationCSS(t *testing.T) {
 		}
 	})
 }
+
+// Progress Bar Tests
+
+func TestSVGGenerator_ProgressBar(t *testing.T) {
+	t.Run("no progress bar by default", func(t *testing.T) {
+		opts := createTestSVGConfig()
+
+		gen := NewSVGGenerator(opts)
+		svg := gen.Generate()
+
+		assertNotContains(t, svg, "progress-bar", "Should not contain progress bar by default")
+		assertNotContains(t, svg, "@keyframes progress", "Should not contain progress keyframes by default")
+	})
+
+	t.Run("renders progress bar with explicit color", func(t *testing.T) {
+		opts := createTestSVGConfig()
+		opts.Style.ProgressBarColor = "#9B79FF"
+
+		gen := NewSVGGenerator(opts)
+		svg := gen.Generate()
+
+		assertContains(t, svg, `class="progress-bar"`, "Should contain progress bar rect")
+		assertContains(t, svg, `fill="#9B79FF"`, "Should use specified color")
+		assertContains(t, svg, "@keyframes progress", "Should contain progress keyframes")
+		assertContains(t, svg, ".progress-bar {", "Should contain progress-bar CSS rule")
+	})
+
+	t.Run("supports RGBA color", func(t *testing.T) {
+		opts := createTestSVGConfig()
+		opts.Style.ProgressBarColor = "#9B79FF80"
+
+		gen := NewSVGGenerator(opts)
+		svg := gen.Generate()
+
+		assertContains(t, svg, `fill="#9B79FF80"`, "Should use RGBA color")
+	})
+
+	t.Run("progress bar is inside inner SVG", func(t *testing.T) {
+		opts := createTestSVGConfig()
+		opts.Style.ProgressBarColor = "#FF0000"
+
+		gen := NewSVGGenerator(opts)
+		svg := gen.Generate()
+
+		// The progress bar rect should appear before the inner </svg> close
+		progressIdx := strings.Index(svg, `class="progress-bar"`)
+		// Count </svg> tags — the progress bar should be before the first </svg>
+		firstCloseSVG := strings.Index(svg, "</svg>")
+
+		if progressIdx < 0 {
+			t.Fatal("Progress bar not found in SVG")
+		}
+		if progressIdx > firstCloseSVG {
+			t.Error("Progress bar should be inside the inner SVG (before first </svg>)")
+		}
+	})
+
+	t.Run("animation duration matches slide animation", func(t *testing.T) {
+		opts := createTestSVGConfig()
+		opts.Style.ProgressBarColor = "#FF0000"
+		opts.Duration = 5.0
+
+		gen := NewSVGGenerator(opts)
+		svg := gen.Generate()
+
+		// Both the slide animation and progress bar should reference the same duration
+		assertContains(t, svg, "animation: progress", "Should have progress animation")
+		assertContains(t, svg, "animation: slide", "Should have slide animation")
+	})
+}

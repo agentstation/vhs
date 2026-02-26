@@ -384,6 +384,68 @@ func TestParseSource(t *testing.T) {
 	})
 }
 
+func TestParseProgressBar(t *testing.T) {
+	t.Run("valid hex colors", func(t *testing.T) {
+		tests := []struct {
+			input    string
+			expected string
+		}{
+			{`Set ProgressBar "#F00"`, "#F00"},
+			{`Set ProgressBar "#FF0000"`, "#FF0000"},
+			{`Set ProgressBar "#FF000080"`, "#FF000080"},
+		}
+
+		for _, tc := range tests {
+			l := lexer.New(tc.input)
+			p := New(l)
+			cmds := p.Parse()
+
+			if len(p.errors) > 0 {
+				t.Errorf("Unexpected error for %q: %s", tc.input, p.errors[0])
+			}
+			if len(cmds) != 1 {
+				t.Fatalf("Expected 1 command for %q, got %d", tc.input, len(cmds))
+			}
+			if cmds[0].Type != token.SET {
+				t.Errorf("Expected SET command, got %s", cmds[0].Type)
+			}
+			if cmds[0].Options != "ProgressBar" {
+				t.Errorf("Expected Options 'ProgressBar', got %q", cmds[0].Options)
+			}
+			if cmds[0].Args != tc.expected {
+				t.Errorf("Expected Args %q, got %q", tc.expected, cmds[0].Args)
+			}
+		}
+	})
+
+	t.Run("invalid colors produce errors", func(t *testing.T) {
+		tests := []string{
+			`Set ProgressBar "#GG0000"`,
+			`Set ProgressBar "#FF00"`,
+			`Set ProgressBar "#FF0000000"`,
+		}
+
+		for _, input := range tests {
+			l := lexer.New(input)
+			p := New(l)
+			_ = p.Parse()
+
+			if len(p.errors) == 0 {
+				t.Errorf("Expected error for %q, got none", input)
+			}
+			found := false
+			for _, err := range p.errors {
+				if strings.Contains(err.String(), "not a valid color") {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("Expected 'not a valid color' error for %q, got: %v", input, p.errors)
+			}
+		}
+	})
+}
 type parseScreenshotTest struct {
 	tape   string
 	errors []string

@@ -436,6 +436,7 @@ var Settings = map[string]CommandFunc{
 	"WaitPattern":         ExecuteSetWaitPattern,
 	"WaitTimeout":         ExecuteSetWaitTimeout,
 	"CursorBlink":         ExecuteSetCursorBlink,
+	"ProgressBar":         ExecuteSetProgressBar,
 }
 
 // ExecuteSet applies the settings on the running vhs specified by the
@@ -652,6 +653,12 @@ func ExecuteLoopOffset(c parser.Command, v *VHS) error {
 // ExecuteSetMarginFill sets vhs margin fill.
 func ExecuteSetMarginFill(c parser.Command, v *VHS) error {
 	v.Options.Video.Style.MarginFill = c.Args
+	return nil
+}
+
+// ExecuteSetProgressBar sets the progress bar color.
+func ExecuteSetProgressBar(c parser.Command, v *VHS) error {
+	v.Options.Video.Style.ProgressBarColor = c.Args
 	return nil
 }
 

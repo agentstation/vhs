@@ -309,6 +309,17 @@ func (g *SVGGenerator) Generate() string {
 
 	sb.WriteString("</g>") // Close animation container
 	g.writeNewline(&sb)
+
+	// Progress bar: full-width bar at bottom that grows left to right via scaleX.
+	// Only rendered when the user sets a color via "Set ProgressBar <color>".
+	// Placed inside the inner SVG so the CSS animation rule (also in this scope) applies
+	// in both browsers and non-browser renderers (librsvg, Inkscape, etc.).
+	if style.ProgressBarColor != "" {
+		sb.WriteString(fmt.Sprintf(`<rect class="progress-bar" x="0" y="%d" width="%s" height="1" fill="%s"/>`,
+			innerHeight-1, formatCoord(viewBoxWidth), style.ProgressBarColor))
+		g.writeNewline(&sb)
+	}
+
 	sb.WriteString("</svg>") // Close inner SVG
 	g.writeNewline(&sb)
 
@@ -1101,6 +1112,15 @@ func (g *SVGGenerator) generateStyles() string {
 		sb.WriteString("@keyframes blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }")
 		g.writeNewline(&sb)
 		sb.WriteString(fmt.Sprintf(".%s { animation: blink 1s infinite; }", cursorIdleClass))
+		g.writeNewline(&sb)
+	}
+
+	// Progress bar animation: grows from left to right over the animation duration
+	if g.options.Style != nil && g.options.Style.ProgressBarColor != "" {
+		sb.WriteString(fmt.Sprintf("@keyframes progress { from { transform: scaleX(0); } to { transform: scaleX(1); } }"))
+		g.writeNewline(&sb)
+		sb.WriteString(fmt.Sprintf(".progress-bar { transform-origin: 0 0; animation: progress %ss linear %ss infinite; }",
+			formatDuration(animationDuration), formatDuration(animationDelay)))
 		g.writeNewline(&sb)
 	}
 
