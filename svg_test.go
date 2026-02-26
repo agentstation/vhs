@@ -1,8 +1,10 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
+	"os/exec"
 	"regexp"
 	"runtime"
 	"strings"
@@ -1475,6 +1477,176 @@ func TestSVGGenerator_TypingAnimationCSS(t *testing.T) {
 		
 		if typingCount < 2 {
 			t.Errorf("Expected at least 2 typing patterns due to deletion, got %d", typingCount)
+		}
+	})
+}
+
+// Font Embedding Tests
+
+func TestSVGGenerator_FontFaceEmbed(t *testing.T) {
+	t.Run("embeds @font-face when FontData is set", func(t *testing.T) {
+		opts := createTestSVGConfig()
+		opts.FontFamily = "TestFont"
+		opts.FontData = base64.StdEncoding.EncodeToString([]byte("fake-font-data"))
+		opts.FontMIME = "font/woff2"
+
+		gen := NewSVGGenerator(opts)
+		svg := gen.Generate()
+
+		assertContains(t, svg, `@font-face`, "Should contain @font-face rule")
+		assertContains(t, svg, `font-family: "TestFont"`, "Should use font family name")
+		assertContains(t, svg, `format("woff2")`, "Should have woff2 format hint")
+		assertContains(t, svg, `data:font/woff2;base64,`, "Should embed base64 data with MIME")
+	})
+
+	t.Run("no @font-face when FontData is empty", func(t *testing.T) {
+		opts := createTestSVGConfig()
+		opts.FontFamily = "TestFont"
+		opts.FontData = ""
+
+		gen := NewSVGGenerator(opts)
+		svg := gen.Generate()
+
+		assertNotContains(t, svg, `@font-face`, "Should not contain @font-face without FontData")
+	})
+
+	t.Run("defaults to monospace font family when FontFamily is empty", func(t *testing.T) {
+		opts := createTestSVGConfig()
+		opts.FontFamily = ""
+		opts.FontData = base64.StdEncoding.EncodeToString([]byte("fake"))
+		opts.FontMIME = "font/truetype"
+
+		gen := NewSVGGenerator(opts)
+		svg := gen.Generate()
+
+		assertContains(t, svg, `font-family: "monospace"`, "Should fall back to monospace")
+	})
+}
+
+func TestSVGGenerator_FontFormatHint(t *testing.T) {
+	tests := []struct {
+		mime         string
+		expectedHint string
+	}{
+		{"font/woff2", "woff2"},
+		{"font/woff", "woff"},
+		{"font/opentype", "opentype"},
+		{"font/truetype", "truetype"},
+		{"", "truetype"}, // default
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.mime, func(t *testing.T) {
+			opts := createTestSVGConfig()
+			opts.FontFamily = "TestFont"
+			opts.FontData = base64.StdEncoding.EncodeToString([]byte("fake"))
+			opts.FontMIME = tc.mime
+
+			gen := NewSVGGenerator(opts)
+			svg := gen.Generate()
+
+			expected := fmt.Sprintf(`format("%s")`, tc.expectedHint)
+			assertContains(t, svg, expected, "Format hint for MIME "+tc.mime)
+		})
+	}
+}
+
+func TestSVGGenerator_FontFamilyEscaping(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"escapes double quotes", `Evil"Font`, `Evil\"Font`},
+		{"escapes backslash", `Evil\Font`, `Evil\\Font`},
+		{"escapes braces", `Evil}Font`, `Evil\}Font`},
+		{"escapes semicolon", `Evil;Font`, `Evil\;Font`},
+		{"escapes angle brackets", `Evil</style>Font`, `Evil\3C /style\3E Font`},
+		{"escapes newlines", "Evil\nFont", `Evil\A Font`},
+		{"strips carriage returns", "Evil\rFont", `EvilFont`},
+		{"plain name unchanged", "JetBrains Mono", `JetBrains Mono`},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := createTestSVGConfig()
+			opts.FontFamily = tc.input
+			opts.FontData = base64.StdEncoding.EncodeToString([]byte("fake"))
+			opts.FontMIME = "font/woff2"
+
+			gen := NewSVGGenerator(opts)
+			svg := gen.Generate()
+
+			expected := fmt.Sprintf(`font-family: "%s"`, tc.expected)
+			assertContains(t, svg, expected, "Escaped font family for "+tc.name)
+		})
+	}
+}
+
+func TestResolveFont_EarlyReturns(t *testing.T) {
+	frames := []SVGFrame{{Lines: []string{"Hello"}}}
+
+	t.Run("empty font family", func(t *testing.T) {
+		data, mime := resolveFont("", frames)
+		if data != "" || mime != "" {
+			t.Errorf("Expected empty results for empty font family, got %q %q", data, mime)
+		}
+	})
+
+	t.Run("monospace font family", func(t *testing.T) {
+		data, mime := resolveFont("monospace", frames)
+		if data != "" || mime != "" {
+			t.Errorf("Expected empty results for monospace, got %q %q", data, mime)
+		}
+	})
+
+	t.Run("comma-separated font list", func(t *testing.T) {
+		data, mime := resolveFont("JetBrains Mono,DejaVu Sans Mono,monospace", frames)
+		if data != "" || mime != "" {
+			t.Errorf("Expected empty results for comma-separated list, got %q %q", data, mime)
+		}
+	})
+
+	t.Run("default font family", func(t *testing.T) {
+		data, mime := resolveFont(defaultFontFamily, frames)
+		if data != "" || mime != "" {
+			t.Errorf("Expected empty results for default font family, got %q %q", data, mime)
+		}
+	})
+}
+
+func TestResolveFont_WithFcMatch(t *testing.T) {
+	if _, err := exec.LookPath("fc-match"); err != nil {
+		t.Skip("fc-match not available")
+	}
+
+	frames := []SVGFrame{{Lines: []string{"Hello World"}}}
+
+	t.Run("resolves a real font", func(t *testing.T) {
+		// Use a font that fc-match is very likely to resolve on any system
+		data, mime := resolveFont("DejaVu Sans Mono", frames)
+		if data == "" {
+			t.Skip("fc-match could not resolve DejaVu Sans Mono on this system")
+		}
+		if mime == "" {
+			t.Error("Expected non-empty MIME type")
+		}
+		// Verify it's valid base64
+		if _, err := base64.StdEncoding.DecodeString(data); err != nil {
+			t.Errorf("FontData is not valid base64: %v", err)
+		}
+	})
+
+	t.Run("returns empty for nonexistent font", func(t *testing.T) {
+		// fc-match always returns *something* (a fallback), so this tests
+		// that at least the function doesn't crash with a weird name
+		data, _ := resolveFont("ZZZNonexistentFont999", frames)
+		// fc-match may still resolve to a fallback — that's fine, just
+		// verify no panic occurred. If it returned data, it should be valid.
+		if data != "" {
+			if _, err := base64.StdEncoding.DecodeString(data); err != nil {
+				t.Errorf("FontData is not valid base64: %v", err)
+			}
 		}
 	})
 }

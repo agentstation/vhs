@@ -67,6 +67,8 @@ type SVGConfig struct {
 	LoopOffset    float64
 	OptimizeSize  bool // Enable size optimizations for smaller output
 	Debug         bool // Enable debug logging
+	FontData      string // Base64-encoded font data for @font-face embedding
+	FontMIME      string // MIME type for the embedded font (e.g. "font/truetype", "font/woff2")
 }
 
 // TerminalState represents a unique terminal state for deduplication.
@@ -959,7 +961,42 @@ func (g *SVGGenerator) generateStyles() string {
 
 	sb.WriteString("<style>")
 	g.writeNewline(&sb)
-	
+
+	// Embed @font-face if font data is provided
+	if g.options.FontData != "" {
+		fontFamily := g.options.FontFamily
+		if fontFamily == "" {
+			fontFamily = svgDefaultFontFamily
+		}
+		mime := g.options.FontMIME
+		if mime == "" {
+			mime = "font/truetype"
+		}
+		// Determine format hint from MIME type
+		formatHint := "truetype"
+		if strings.Contains(mime, "woff2") {
+			formatHint = "woff2"
+		} else if strings.Contains(mime, "woff") {
+			formatHint = "woff"
+		} else if strings.Contains(mime, "opentype") {
+			formatHint = "opentype"
+		}
+		safeFontFamily := strings.NewReplacer(
+			`\`, `\\`,
+			`"`, `\"`,
+			"\n", `\A `,
+			"\r", "",
+			`}`, `\}`,
+			`{`, `\{`,
+			`;`, `\;`,
+			`<`, `\3C `,
+			`>`, `\3E `,
+		).Replace(fontFamily)
+		sb.WriteString(fmt.Sprintf(`@font-face { font-family: "%s"; src: url("data:%s;base64,%s") format("%s"); }`,
+			safeFontFamily, mime, g.options.FontData, formatHint))
+		g.writeNewline(&sb)
+	}
+
 	// Generate typing animations for detected patterns
 	for i, pattern := range g.patterns {
 		switch pattern.Type {

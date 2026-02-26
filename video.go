@@ -9,6 +9,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"log"
 	"os"
@@ -186,6 +187,11 @@ func MakeSVG(v *VHS) error {
 	// Calculate total duration based on frame count and framerate
 	duration := float64(len(v.svgFrames)) / float64(v.Options.Video.Framerate)
 
+	// Try to embed the font for portable SVG rendering.
+	// Uses fc-match to find the font file, then base64-encodes it.
+	// If pyftsubset is available, subset the font to only the glyphs used.
+	fontData, fontMIME := resolveFont(v.Options.FontFamily, v.svgFrames)
+
 	// Create SVG config
 	svgOpts := SVGConfig{
 		Width:         v.Options.Video.Style.Width,
@@ -202,6 +208,8 @@ func MakeSVG(v *VHS) error {
 		LoopOffset:    v.Options.LoopOffset,
 		OptimizeSize:  v.Options.SVG.OptimizeSize,
 		Debug:         v.Options.DebugConsole,
+		FontData:      fontData,
+		FontMIME:      fontMIME,
 	}
 
 	// Generate SVG
@@ -214,4 +222,128 @@ func MakeSVG(v *VHS) error {
 	}
 
 	return nil
+}
+
+// resolveFont finds the font file for the given family using fc-match,
+// subsets it to only the glyphs used in the SVG frames (if pyftsubset
+// is available), and returns the base64-encoded data with its MIME type.
+// Returns empty strings if the font cannot be resolved.
+func resolveFont(fontFamily string, frames []SVGFrame) (string, string) {
+	// Only embed a single, explicitly-set font family. The default font stack
+	// is a comma-separated fallback list for browser rendering — embedding the
+	// first match would produce a @font-face name that doesn't match the CSS
+	// font-family property on text elements.
+	if fontFamily == "" || fontFamily == "monospace" || strings.Contains(fontFamily, ",") {
+		return "", ""
+	}
+
+	// Use fc-match to find the font file path
+	out, err := exec.Command("fc-match", fontFamily, "--format=%{file}").Output()
+	if err != nil {
+		log.Printf("fc-match failed for %q: %v", fontFamily, err)
+		return "", ""
+	}
+
+	fontPath := strings.TrimSpace(string(out))
+	if fontPath == "" {
+		return "", ""
+	}
+	if _, err := os.Stat(fontPath); err != nil {
+		log.Printf("Font file not found: %s", fontPath)
+		return "", ""
+	}
+
+	// Try subsetting with pyftsubset for smaller output
+	if data, ok := subsetFont(fontPath, frames); ok {
+		encoded := base64.StdEncoding.EncodeToString(data)
+		log.Printf("Embedding subset font (%d KB, woff2)", len(data)/1024)
+		return encoded, "font/woff2"
+	}
+
+	// Fallback: embed the full font file
+	data, err := os.ReadFile(fontPath)
+	if err != nil {
+		log.Printf("Failed to read font file %s: %v", fontPath, err)
+		return "", ""
+	}
+
+	mime := "font/truetype"
+	switch strings.ToLower(filepath.Ext(fontPath)) {
+	case ".woff2":
+		mime = "font/woff2"
+	case ".woff":
+		mime = "font/woff"
+	case ".otf":
+		mime = "font/opentype"
+	}
+
+	encoded := base64.StdEncoding.EncodeToString(data)
+	log.Printf("Embedding full font %s (%s, %d KB)", fontPath, mime, len(data)/1024)
+
+	return encoded, mime
+}
+
+// subsetFont uses pyftsubset to create a woff2 subset of the font
+// containing only the glyphs used in the given SVG frames.
+// Returns the woff2 data and true on success, or nil and false on failure.
+func subsetFont(fontPath string, frames []SVGFrame) ([]byte, bool) {
+	if _, err := exec.LookPath("pyftsubset"); err != nil {
+		return nil, false
+	}
+
+	// Collect unique codepoints from all frame text
+	codepoints := make(map[rune]struct{})
+	for _, frame := range frames {
+		for _, line := range frame.Lines {
+			for _, r := range line {
+				codepoints[r] = struct{}{}
+			}
+		}
+		if frame.CursorChar != "" {
+			for _, r := range frame.CursorChar {
+				codepoints[r] = struct{}{}
+			}
+		}
+	}
+
+	if len(codepoints) == 0 {
+		return nil, false
+	}
+
+	// Build Unicode range string for pyftsubset (e.g. "U+0041,U+0042")
+	unicodes := make([]string, 0, len(codepoints))
+	for r := range codepoints {
+		unicodes = append(unicodes, fmt.Sprintf("U+%04X", r))
+	}
+
+	// Create temp file for output
+	tmpFile, err := os.CreateTemp("", "vhs-font-*.woff2")
+	if err != nil {
+		return nil, false
+	}
+	tmpPath := tmpFile.Name()
+	tmpFile.Close()
+	defer os.Remove(tmpPath)
+
+	// Run pyftsubset
+	//nolint:gosec
+	cmd := exec.Command("pyftsubset", fontPath,
+		"--unicodes="+strings.Join(unicodes, ","),
+		"--flavor=woff2",
+		"--output-file="+tmpPath,
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("pyftsubset failed: %v: %s", err, out)
+		return nil, false
+	}
+
+	data, err := os.ReadFile(tmpPath)
+	if err != nil {
+		return nil, false
+	}
+
+	log.Printf("Font subset: %d glyphs, %d KB woff2 (from %s)",
+		len(codepoints), len(data)/1024, fontPath)
+
+	return data, true
 }
