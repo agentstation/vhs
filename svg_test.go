@@ -307,6 +307,57 @@ func TestSVGGenerator_BackgroundColors(t *testing.T) {
 	})
 }
 
+// TestSVGGenerator_SlowCaptureTimestamp verifies that when CaptureSVGFrame
+// runs slower than the target frame interval (e.g. 80ms per call at 50fps),
+// the animation duration and keyframe percentages are derived from the actual
+// frame timestamps rather than from len(frames)/framerate. Without this fix,
+// a 2s Sleep captured at 80ms/frame (25 frames) would produce an animation
+// duration of 25/50=0.5s instead of the correct 2s.
+func TestSVGGenerator_SlowCaptureTimestamp(t *testing.T) {
+	// Simulate a 2-second Sleep captured at ~80ms effective rate (slow capture).
+	// At 50fps the target interval is 20ms, but if CaptureSVGFrame takes 80ms
+	// the goroutine fires at 80ms intervals → 25 frames over 2 seconds.
+	// Timestamps reflect real elapsed time, not counter/framerate.
+	slowFrames := make([]SVGFrame, 0, 26)
+	for i := range 25 {
+		slowFrames = append(slowFrames, SVGFrame{
+			Lines:      []string{"$ "},
+			CursorX:    2,
+			CursorY:    0,
+			Timestamp:  float64(i) * 0.08, // 80ms per frame
+			CharWidth:  8.8,
+			CharHeight: 20,
+		})
+	}
+	// New state after the Sleep.
+	lastTimestamp := float64(24)*0.08 + 0.08 // 2.0s
+	slowFrames = append(slowFrames, SVGFrame{
+		Lines:      []string{"$ hello"},
+		CursorX:    7,
+		CursorY:    0,
+		Timestamp:  lastTimestamp,
+		CharWidth:  8.8,
+		CharHeight: 20,
+	})
+
+	opts := createTestSVGConfig()
+	// Duration must come from the last frame's timestamp (as MakeSVG now does),
+	// not from len(frames)/framerate which would give 26/50 = 0.52s.
+	opts.Duration = slowFrames[len(slowFrames)-1].Timestamp
+	opts.Frames = slowFrames
+
+	gen := NewSVGGenerator(opts)
+	svg := gen.Generate()
+
+	// The animation should play for ~2s, not 0.52s (len/framerate).
+	assertContains(t, svg, "animation: slide 2s", "Animation duration reflects real elapsed time")
+
+	// The keyframe for the new state ($ hello) should appear at ~100% since
+	// it's the last frame. The preceding Sleep frames are deduplicated but
+	// their duration is preserved via the percentage gap.
+	assertNotContains(t, svg, "animation: slide 0.52s", "Duration must not use len/framerate")
+}
+
 // Animation and Timing Tests
 func TestSVGGenerator_AnimationTiming(t *testing.T) {
 	t.Run("applies PlaybackSpeed", func(t *testing.T) {

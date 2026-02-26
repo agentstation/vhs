@@ -328,7 +328,15 @@ func (g *SVGGenerator) Generate() string {
 func (g *SVGGenerator) processFrames() {
 	// First, detect patterns for optimization
 	g.detectPatterns()
-	
+
+	// Determine whether frames carry real wall-clock timestamps.
+	// If the last frame has a non-zero timestamp and Duration > 0 we use
+	// timestamps for keyframe percentages; otherwise fall back to frame index
+	// (which is uniform and correct for unit tests that don't set Timestamp).
+	useTimestamps := g.options.Duration > 0 &&
+		len(g.options.Frames) > 0 &&
+		g.options.Frames[len(g.options.Frames)-1].Timestamp > 0
+
 	// First pass: collect all unique states and track when they change
 	lastStateIndex := -1
 	lastCursorIdleTime := 0.0
@@ -401,12 +409,24 @@ func (g *SVGGenerator) processFrames() {
 		hash := g.hashState(&state)
 		state.Hash = hash
 
+		// Compute keyframe percentage. When real wall-clock timestamps are
+		// available (useTimestamps), use them so that Sleep pauses appear
+		// at the correct proportional position regardless of capture rate.
+		// Fall back to uniform frame-index when frames have no timestamps
+		// (e.g. unit tests).
+		pct := 0.0
+		if useTimestamps {
+			pct = frame.Timestamp / g.options.Duration * 100
+		} else if len(g.options.Frames) > 1 {
+			pct = float64(i) / float64(len(g.options.Frames)-1) * 100
+		}
+
 		// Check if we've seen this state before
 		if idx, exists := g.stateMap[hash]; exists {
 			// Reuse existing state - only add to timeline if state changed
 			if idx != lastStateIndex {
 				g.timeline = append(g.timeline, KeyframeStop{
-					Percentage: float64(i) / float64(len(g.options.Frames)-1) * 100,
+					Percentage: pct,
 					StateIndex: idx,
 				})
 				lastStateIndex = idx
@@ -433,7 +453,7 @@ func (g *SVGGenerator) processFrames() {
 			}
 
 			g.timeline = append(g.timeline, KeyframeStop{
-				Percentage: float64(i) / float64(len(g.options.Frames)-1) * 100,
+				Percentage: pct,
 				StateIndex: idx,
 			})
 			lastStateIndex = idx
@@ -1754,7 +1774,10 @@ func (g *SVGGenerator) generateWindowBar() string {
 }
 
 // CaptureSVGFrame captures the current terminal state and returns an SVGFrame.
-func CaptureSVGFrame(page *rod.Page, counter int, framerate int) (*SVGFrame, error) {
+// elapsedSeconds is the actual wall-clock time elapsed since recording started,
+// used directly as the frame timestamp to avoid drift when the capture call
+// itself takes longer than the target frame interval.
+func CaptureSVGFrame(page *rod.Page, elapsedSeconds float64) (*SVGFrame, error) {
 	// Get cursor position and exact character positions from xterm.js
 	termInfo, err := page.Eval(`() => {
 		const term = window.term;
@@ -2021,7 +2044,7 @@ func CaptureSVGFrame(page *rod.Page, counter int, framerate int) (*SVGFrame, err
 		CursorY:    cursorY,
 		CharWidth:  charWidth,
 		CharHeight: charHeight,
-		Timestamp:  float64(counter) / float64(framerate),
+		Timestamp:  elapsedSeconds,
 		CursorChar: cursorChar,
 	}
 

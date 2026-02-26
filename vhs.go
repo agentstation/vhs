@@ -257,6 +257,20 @@ func (vhs *VHS) Render() error {
 		vhs.Options.Video.Style.FontSize = vhs.Options.FontSize
 	}
 
+	// Compute actual capture framerate from wall-clock timestamps so
+	// ffmpeg uses the right input rate (CanvasToImage is slower than
+	// the target framerate, so we capture fewer frames than expected).
+	// NOTE: totalFrames counts PNG frames written to disk, while
+	// svgFrames may have fewer entries if CaptureSVGFrame failed for
+	// some frames. We intentionally use totalFrames here because ffmpeg
+	// consumes the PNG sequence, so its input rate must match the PNG count.
+	if len(vhs.svgFrames) > 0 {
+		wallDuration := vhs.svgFrames[len(vhs.svgFrames)-1].Timestamp
+		if wallDuration > 0 && vhs.totalFrames > 0 {
+			vhs.Options.Video.ActualFramerate = float64(vhs.totalFrames) / wallDuration
+		}
+	}
+
 	// Generate the video(s) with the frames.
 	var cmds []*exec.Cmd
 	cmds = append(cmds, MakeGIF(vhs.Options.Video))
@@ -363,7 +377,13 @@ func (vhs *VHS) Record(ctx context.Context) <-chan error {
 	//nolint: mnd
 	go func() {
 		counter := 0
-		start := time.Now()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		// Track wall-clock elapsed recording time so SVG timestamps
+		// reflect real duration even when CanvasToImage is slower
+		// than the tick interval (Go's Ticker drops missed ticks).
+		var svgElapsed time.Duration
+		var lastFrameTime time.Time
 		for {
 			select {
 			case <-ctx.Done():
@@ -376,16 +396,23 @@ func (vhs *VHS) Record(ctx context.Context) <-chan error {
 				close(ch)
 				return
 
-			case <-time.After(interval - time.Since(start)):
-				// record last attempt
-				start = time.Now()
+			case <-ticker.C:
 
 				if !vhs.recording {
+					// Reset frame timer when hidden so we don't count the gap.
+					lastFrameTime = time.Time{}
 					continue
 				}
 				if vhs.Page == nil {
 					continue
 				}
+
+				// Accumulate only the time spent while visible.
+				now := time.Now()
+				if !lastFrameTime.IsZero() {
+					svgElapsed += now.Sub(lastFrameTime)
+				}
+				lastFrameTime = now
 
 				cursor, cursorErr := vhs.CursorCanvas.CanvasToImage("image/png", quality)
 				text, textErr := vhs.TextCanvas.CanvasToImage("image/png", quality)
@@ -414,7 +441,7 @@ func (vhs *VHS) Record(ctx context.Context) <-chan error {
 
 				// Capture SVG frame data if SVG output is requested
 				if vhs.Options.Video.Output.SVG != "" {
-					svgFrame, err := CaptureSVGFrame(vhs.Page, counter, vhs.Options.Video.Framerate)
+					svgFrame, err := CaptureSVGFrame(vhs.Page, svgElapsed.Seconds())
 					if err != nil {
 						log.Printf("Error capturing SVG frame %d: %v", counter, err)
 					} else if svgFrame != nil {
