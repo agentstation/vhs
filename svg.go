@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"html"
 	"log"
+	"math"
 	"strings"
 
 	"github.com/go-rod/rod"
@@ -40,6 +41,8 @@ type SVGFrame struct {
 	CharWidth  float64
 	CharHeight float64
 	CursorChar string // The cursor character (e.g., '█' for block)
+	TermCols   int    // Number of terminal columns from xterm.js
+	TermRows   int    // Number of terminal rows from xterm.js
 }
 
 // CharStyle represents the style of a character.
@@ -205,9 +208,35 @@ func (g *SVGGenerator) Generate() string {
 		g.fontSize = 20
 	}
 
-	var sb strings.Builder
+	// Calculate inner terminal area
+	barHeight := 0
+	if style.WindowBar != "" {
+		barHeight = style.WindowBarSize
+	}
 
-	// Calculate total dimensions including margins
+	padding := style.Padding
+	innerX := padding
+	innerY := barHeight + padding
+	innerWidth := style.Width - (padding * 2)
+	innerHeight := style.Height - barHeight - (padding * 2)
+
+	// Snap both dimensions to the terminal character grid to eliminate gaps
+	// between content and SVG edge. textLength on <text> elements prevents
+	// text overflow, and style="background:..." fills any subpixel gaps.
+	if g.charWidth > 0 && len(g.options.Frames) > 0 && g.options.Frames[0].TermCols > 0 {
+		innerWidth = int(math.Round(float64(g.options.Frames[0].TermCols) * g.charWidth))
+	}
+	if g.charHeight > 0 && len(g.options.Frames) > 0 && g.options.Frames[0].TermRows > 0 {
+		innerHeight = int(math.Round(float64(g.options.Frames[0].TermRows) * g.charHeight))
+	}
+
+	// Update frame spacing and outer dimensions to match snapped inner area
+	g.frameSpacing = float64(innerWidth)
+	style.Width = innerWidth + (padding * 2)
+	style.Height = innerHeight + barHeight + (padding * 2)
+	g.options.Width = style.Width
+	g.options.Height = style.Height
+
 	totalWidth := style.Width
 	totalHeight := style.Height
 	if style.Margin > 0 {
@@ -215,9 +244,19 @@ func (g *SVGGenerator) Generate() string {
 		totalHeight += style.Margin * 2
 	}
 
+	var sb strings.Builder
+
+	// Resolve the background color used for the terminal window chrome.
+	// We apply it to the outer <svg> as well to prevent subpixel rendering
+	// artifacts (thin lines at the edges where the rect doesn't quite reach).
+	bgColor := style.BackgroundColor
+	if bgColor == "" {
+		bgColor = defaultBarColor
+	}
+
 	// SVG root element
-	sb.WriteString(fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">`,
-		totalWidth, totalHeight))
+	sb.WriteString(fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" style="background:%s">`,
+		totalWidth, totalHeight, bgColor))
 	g.writeNewline(&sb)
 
 	// Add margin group if needed
@@ -236,28 +275,8 @@ func (g *SVGGenerator) Generate() string {
 	// Terminal window
 	sb.WriteString(g.generateTerminalWindow())
 
-	// Calculate inner terminal area
-	barHeight := 0
-	if style.WindowBar != "" {
-		barHeight = style.WindowBarSize
-	}
-
-	padding := style.Padding
-	innerX := padding
-	innerY := barHeight + padding
-	innerWidth := style.Width - (padding * 2)
-	innerHeight := style.Height - barHeight - (padding * 2)
-
-	// Inner terminal SVG with viewBox for animation
-	// Calculate actual terminal content height
-	maxLines := 0
-	for _, state := range g.states {
-		if len(state.Lines) > maxLines {
-			maxLines = len(state.Lines)
-		}
-	}
 	// viewBox width should match frame spacing (one frame width), height matches terminal
-	viewBoxWidth := g.frameSpacing
+	viewBoxWidth := float64(innerWidth)
 	viewBoxHeight := float64(innerHeight)
 
 	// Create inner SVG with viewBox that shows one frame at a time
@@ -1259,6 +1278,7 @@ func (g *SVGGenerator) generateState(index int, state *TerminalState) string {
 
 				// Render all text in a single text element with inline cursor
 				// Add xml:space="preserve" to preserve whitespace
+				// The inner <svg> viewport clips any overflow, so no textLength needed.
 				sb.WriteString(fmt.Sprintf(`<text y="%s" xml:space="preserve">`, formatCoord(yPos)))
 
 				// Render text before cursor with proper styling
@@ -1380,6 +1400,7 @@ func (g *SVGGenerator) generateState(index int, state *TerminalState) string {
 			} else {
 				// No cursor on this line, render normally
 				// Add xml:space="preserve" to preserve whitespace
+				// The inner <svg> viewport clips any overflow, so no textLength needed.
 				sb.WriteString(fmt.Sprintf(`<text y="%s" xml:space="preserve">`, formatCoord(yPos)))
 				g.renderTextSegment(&sb, string(runes), y, 0, len(runes), hasColors, state.LineColors)
 				sb.WriteString("</text>")
@@ -1933,7 +1954,9 @@ func CaptureSVGFrame(page *rod.Page, counter int, framerate int) (*SVGFrame, err
 			charWidth: charWidth,
 			charHeight: charHeight,
 			lineColors: lineColors,
-			cursorChar: cursorChar
+			cursorChar: cursorChar,
+			termCols: cols,
+			termRows: term.rows
 		};
 	}`)
 	if err != nil {
@@ -1979,6 +2002,8 @@ func CaptureSVGFrame(page *rod.Page, counter int, framerate int) (*SVGFrame, err
 	charWidth := termInfo.Value.Get("charWidth").Num()
 	charHeight := termInfo.Value.Get("charHeight").Num()
 	cursorChar := termInfo.Value.Get("cursorChar").Str()
+	termCols := termInfo.Value.Get("termCols").Int()
+	termRows := termInfo.Value.Get("termRows").Int()
 
 	// Parse line colors
 	lineColors := [][]CharStyle{}
@@ -2023,6 +2048,8 @@ func CaptureSVGFrame(page *rod.Page, counter int, framerate int) (*SVGFrame, err
 		CharHeight: charHeight,
 		Timestamp:  float64(counter) / float64(framerate),
 		CursorChar: cursorChar,
+		TermCols:   termCols,
+		TermRows:   termRows,
 	}
 
 	return svgFrame, nil
