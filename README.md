@@ -129,7 +129,8 @@ Use a package manager:
 
 ```sh
 # 🚀 Install this fork with SVG support (macOS or Linux)
-brew install agentstation/tap/vhs
+brew trust --cask agentstation/tap/vhs
+brew install --cask agentstation/tap/vhs
 
 # Original VHS (without SVG support)
 brew install vhs
