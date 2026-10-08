@@ -40,6 +40,8 @@ type SVGFrame struct {
 	CharWidth  float64
 	CharHeight float64
 	CursorChar string // The cursor character (e.g., '█' for block)
+	TermCols   int    // Number of terminal columns from xterm.js
+	TermRows   int    // Number of terminal rows from xterm.js
 }
 
 // CharStyle represents the style of a character.
@@ -147,10 +149,13 @@ func NewSVGGenerator(opts SVGConfig) *SVGGenerator {
 	charWidth := float64(opts.FontSize) * 0.55 // fallback
 	charHeight := float64(opts.FontSize) * 1.2 // fallback
 
-	if len(opts.Frames) > 0 && opts.Frames[0].CharWidth > 0 {
-		// Use actual dimensions from xterm.js
-		charWidth = opts.Frames[0].CharWidth
-		charHeight = opts.Frames[0].CharHeight
+	if len(opts.Frames) > 0 {
+		if validSVGCellSize(opts.Frames[0].CharWidth) {
+			charWidth = opts.Frames[0].CharWidth
+		}
+		if validSVGCellSize(opts.Frames[0].CharHeight) {
+			charHeight = opts.Frames[0].CharHeight
+		}
 	}
 
 	// Get style for calculating frame spacing
@@ -207,6 +212,10 @@ func (g *SVGGenerator) Generate() string {
 		style = DefaultStyleOptions()
 	}
 
+	localStyle := *style
+	style = &localStyle
+	g.options.Style = style
+
 	// Process frames to extract unique states
 	g.processFrames()
 
@@ -216,15 +225,39 @@ func (g *SVGGenerator) Generate() string {
 		g.fontSize = 20
 	}
 
-	var sb strings.Builder
+	// Calculate inner terminal area
+	barHeight := 0
+	if style.WindowBar != "" {
+		barHeight = style.WindowBarSize
+	}
 
-	// Calculate total dimensions including margins
+	padding := style.Padding
+	innerX := padding
+	innerY := barHeight + padding
+	innerWidth := style.Width - (padding * 2)
+	innerHeight := style.Height - barHeight - (padding * 2)
+
+	if len(g.options.Frames) > 0 {
+		frame := g.options.Frames[0]
+		innerWidth = svgGridDimension(frame.TermCols, g.charWidth, innerWidth)
+		innerHeight = svgGridDimension(frame.TermRows, g.charHeight, innerHeight)
+	}
+
+	// Update frame spacing and outer dimensions to match snapped inner area
+	g.frameSpacing = float64(innerWidth)
+	style.Width = innerWidth + (padding * 2)
+	style.Height = innerHeight + barHeight + (padding * 2)
+	g.options.Width = style.Width
+	g.options.Height = style.Height
+
 	totalWidth := style.Width
 	totalHeight := style.Height
 	if style.Margin > 0 {
 		totalWidth += style.Margin * 2
 		totalHeight += style.Margin * 2
 	}
+	var sb strings.Builder
+
 	// SVG root element
 	_, _ = fmt.Fprintf(&sb, `<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">`,
 		totalWidth, totalHeight)
@@ -246,28 +279,8 @@ func (g *SVGGenerator) Generate() string {
 	// Terminal window
 	sb.WriteString(g.generateTerminalWindow())
 
-	// Calculate inner terminal area
-	barHeight := 0
-	if style.WindowBar != "" {
-		barHeight = style.WindowBarSize
-	}
-
-	padding := style.Padding
-	innerX := padding
-	innerY := barHeight + padding
-	innerWidth := style.Width - (padding * 2)
-	innerHeight := style.Height - barHeight - (padding * 2)
-
-	// Inner terminal SVG with viewBox for animation
-	// Calculate actual terminal content height
-	maxLines := 0
-	for _, state := range g.states {
-		if len(state.Lines) > maxLines {
-			maxLines = len(state.Lines)
-		}
-	}
 	// viewBox width should match frame spacing (one frame width), height matches terminal
-	viewBoxWidth := g.frameSpacing
+	viewBoxWidth := float64(innerWidth)
 	viewBoxHeight := float64(innerHeight)
 	// Create inner SVG with viewBox that shows one frame at a time
 	_, _ = fmt.Fprintf(&sb, `<svg x="%d" y="%d" width="%d" height="%d" viewBox="0 0 %s %s">`,
@@ -1943,7 +1956,9 @@ func CaptureSVGFrame(page *rod.Page, timestamp float64) (*SVGFrame, error) {
 			charWidth: charWidth,
 			charHeight: charHeight,
 			lineColors: lineColors,
-			cursorChar: cursorChar
+			cursorChar: cursorChar,
+			termCols: cols,
+			termRows: term.rows
 		};
 	}`)
 	if err != nil {
@@ -1989,6 +2004,8 @@ func CaptureSVGFrame(page *rod.Page, timestamp float64) (*SVGFrame, error) {
 	charWidth := termInfo.Value.Get("charWidth").Num()
 	charHeight := termInfo.Value.Get("charHeight").Num()
 	cursorChar := termInfo.Value.Get("cursorChar").Str()
+	termCols := termInfo.Value.Get("termCols").Int()
+	termRows := termInfo.Value.Get("termRows").Int()
 
 	// Parse line colors
 	lineColors := [][]CharStyle{}
@@ -2033,6 +2050,8 @@ func CaptureSVGFrame(page *rod.Page, timestamp float64) (*SVGFrame, error) {
 		CharHeight: charHeight,
 		Timestamp:  timestamp,
 		CursorChar: cursorChar,
+		TermCols:   termCols,
+		TermRows:   termRows,
 	}
 
 	return svgFrame, nil
