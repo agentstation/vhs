@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -125,8 +126,14 @@ func TestBrowserGridWithExactSVGFont(t *testing.T) {
 			if err := xml.Unmarshal(data, &dimensions); err != nil {
 				t.Fatal(err)
 			}
-			if dimensions.Width != v.Options.Video.Style.Width || dimensions.Height != v.Options.Video.Style.Height {
-				t.Fatalf("SVG dimensions = %dx%d, want %dx%d", dimensions.Width, dimensions.Height, v.Options.Video.Style.Width, v.Options.Video.Style.Height)
+			frame := v.svgFrames[0]
+			if frame.TermCols != dims.Value.Get("cols").Int() || frame.TermRows != dims.Value.Get("rows").Int() {
+				t.Fatalf("capture grid = %dx%d, want %s", frame.TermCols, frame.TermRows, dims.Value.JSON("", ""))
+			}
+			wantWidth := int(math.Ceil(float64(frame.TermCols)*frame.CharWidth)) + 2*v.Options.Video.Style.Padding
+			wantHeight := int(math.Ceil(float64(frame.TermRows)*frame.CharHeight)) + 2*v.Options.Video.Style.Padding + v.Options.Video.Style.WindowBarSize
+			if dimensions.Width != wantWidth || dimensions.Height != wantHeight {
+				t.Fatalf("SVG dimensions = %dx%d, want measured grid %dx%d", dimensions.Width, dimensions.Height, wantWidth, wantHeight)
 			}
 			cancel()
 			if err := v.Setup(); !errors.Is(err, context.Canceled) {

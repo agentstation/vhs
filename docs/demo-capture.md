@@ -137,3 +137,5 @@ Review the explicit font option with the existing font PR.
 Run the repository checks and structured review before publishing a revision.
 Publish a tested release, then bind demo generation to its immutable revision and binary hash.
 This review does not publish a PR, push a branch, merge changes, or create a release.
+
+SVG dimensions fit the recorded terminal rows and columns. Fractional cell sizes round up to a full pixel. Padding, window bars, and margins remain in the output. SVG sizing preserves capture settings and rounded corner transparency.

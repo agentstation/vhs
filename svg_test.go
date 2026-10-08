@@ -113,6 +113,8 @@ func TestSVGGenerator_StyleOptions(t *testing.T) {
 		svg := gen.Generate()
 
 		// Check dimensions with margins
+		// Width: TermCols=0 in test so unchanged: 1024 + 2*10 = 1044
+		// Height: TermRows=0 in test so unchanged: 768 + 2*10 = 788
 		assertContains(t, svg, "1044", "Total width with margins")
 		assertContains(t, svg, "788", "Total height with margins")
 

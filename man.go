@@ -77,6 +77,7 @@ The following is a list of all possible setting commands in VHS:
 * Set %Padding% <number>
 * Set %Framerate% <number>
 * Set %PlaybackSpeed% <float>
+* Set %ProgressBar% "<hex-color>"
 * Set %WaitTimeout% <time>
 * Set %WaitPattern% <regexp>
 `
