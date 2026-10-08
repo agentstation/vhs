@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"os"
 
 	"github.com/agentstation/vhs/lexer"
@@ -30,6 +29,20 @@ func WithDebugConsole(debug bool) EvaluatorOption {
 	}
 }
 
+// WithBrowserPath selects the executable used for capture.
+func WithBrowserPath(path string) EvaluatorOption {
+	return func(v *VHS) {
+		v.Options.BrowserPath = path
+	}
+}
+
+// WithSVGFontFile selects an exact font for capture and SVG output.
+func WithSVGFontFile(path string) EvaluatorOption {
+	return func(v *VHS) {
+		v.Options.SVG.FontFile = path
+	}
+}
+
 // Evaluate takes as input a tape string, an output writer, and an output file
 // and evaluates all the commands within the tape string and produces a GIF.
 func Evaluate(ctx context.Context, tape string, out io.Writer, opts ...EvaluatorOption) []error {
@@ -51,7 +64,7 @@ func Evaluate(ctx context.Context, tape string, out io.Writer, opts ...Evaluator
 	}
 
 	for _, cmd := range cmds {
-		if cmd.Type == token.SET && cmd.Options == "Shell" || cmd.Type == token.ENV {
+		if cmd.Type == token.SET && cmd.Options == shellSetting || cmd.Type == token.ENV {
 			err := Execute(cmd, &v)
 			if err != nil {
 				return []error{err}
@@ -60,7 +73,7 @@ func Evaluate(ctx context.Context, tape string, out io.Writer, opts ...Evaluator
 	}
 
 	// Start things up
-	if err := v.Start(); err != nil {
+	if err := v.Start(ctx); err != nil {
 		return []error{err}
 	}
 	defer func() { _ = v.close() }()
@@ -77,7 +90,7 @@ func Evaluate(ctx context.Context, tape string, out io.Writer, opts ...Evaluator
 	for i, cmd := range cmds {
 		if cmd.Type == token.SET || cmd.Type == token.OUTPUT || cmd.Type == token.REQUIRE {
 			_, _ = fmt.Fprintln(out, Highlight(cmd, false))
-			if cmd.Options != "Shell" {
+			if cmd.Options != shellSetting {
 				err := Execute(cmd, &v)
 				if err != nil {
 					return []error{err}
@@ -112,7 +125,12 @@ func Evaluate(ctx context.Context, tape string, out io.Writer, opts ...Evaluator
 	}
 
 	// Setup the terminal session so we can start executing commands.
-	v.Setup()
+	if err := v.installSVGFont(); err != nil {
+		return []error{err}
+	}
+	if err := v.Setup(); err != nil {
+		return []error{err}
+	}
 
 	// If the first command (after Settings and Outputs) is a Hide command, we can
 	// begin executing the commands before we start recording to avoid capturing
@@ -132,8 +150,8 @@ func Evaluate(ctx context.Context, tape string, out io.Writer, opts ...Evaluator
 	}
 
 	// Begin recording frames as we are now in a recording state.
-	ctx, cancel := context.WithCancel(ctx)
-	ch := v.Record(ctx)
+	recordCtx, cancel := context.WithCancel(ctx)
+	ch := v.Record(recordCtx)
 
 	// Clean up temporary files at the end.
 	defer func() {
@@ -145,24 +163,28 @@ func Evaluate(ctx context.Context, tape string, out io.Writer, opts ...Evaluator
 		_ = v.Cleanup()
 	}()
 
-	teardown := func() {
-		// Stop recording frames.
+	teardown := func() []error {
 		cancel()
-		// Read from channel to ensure recorder is done.
-		<-ch
+		var errs []error
+		for err := range ch {
+			errs = append(errs, err)
+		}
+		// Commands have stopped, so browser cleanup cannot interrupt their rod calls.
+		_ = v.terminate()
+		return errs
 	}
 
-	// Log errors from the recording process.
-	go func() {
-		for err := range ch {
-			log.Print(err.Error())
-		}
-	}()
-
 	for _, cmd := range cmds[offset:] {
+		// A capture failure stops the tape before the next command.
+		select {
+		case err := <-ch:
+			if err != nil {
+				return append([]error{err}, teardown()...)
+			}
+		default:
+		}
 		if ctx.Err() != nil {
-			teardown()
-			return []error{ctx.Err()}
+			return append(teardown(), ctx.Err())
 		}
 
 		// When changing the FontFamily, FontSize, LineHeight, Padding
@@ -182,11 +204,10 @@ func Evaluate(ctx context.Context, tape string, out io.Writer, opts ...Evaluator
 			_, _ = fmt.Fprintln(out, Highlight(cmd, true))
 			continue
 		}
-		_, _ = fmt.Fprintln(out, Highlight(cmd, !v.recording || cmd.Type == token.SHOW || cmd.Type == token.HIDE || isSetting))
+		_, _ = fmt.Fprintln(out, Highlight(cmd, !v.isRecording() || cmd.Type == token.SHOW || cmd.Type == token.HIDE || isSetting))
 		err := Execute(cmd, &v)
 		if err != nil {
-			teardown()
-			return []error{err}
+			return append(teardown(), err)
 		}
 	}
 
@@ -202,8 +223,10 @@ func Evaluate(ctx context.Context, tape string, out io.Writer, opts ...Evaluator
 		opt(&v)
 	}
 
-	teardown()
-	if err := v.Render(); err != nil {
+	if errs := teardown(); len(errs) > 0 {
+		return errs
+	}
+	if err := v.Render(ctx); err != nil {
 		return []error{err}
 	}
 	return nil

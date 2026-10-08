@@ -62,6 +62,8 @@ var (
 type StyleOptions struct {
 	Width               int
 	Height              int
+	Rows                int
+	Columns             int
 	Padding             int
 	BackgroundColor     string
 	MarginFill          string

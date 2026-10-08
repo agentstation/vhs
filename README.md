@@ -129,7 +129,8 @@ Use a package manager:
 
 ```sh
 # 🚀 Install this fork with SVG support (macOS or Linux)
-brew install agentstation/tap/vhs
+brew trust --cask agentstation/tap/vhs
+brew install --cask agentstation/tap/vhs
 
 # Original VHS (without SVG support)
 brew install vhs
@@ -214,6 +215,19 @@ scoop install vhs
 
 [releases]: https://github.com/agentstation/vhs/releases
 
+Use `--browser-path` to select the browser executable for capture:
+
+```sh
+vhs --browser-path "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" demo.tape
+```
+
+You can also set `VHS_BROWSER_PATH`. The command-line option takes precedence.
+If both values are empty, VHS uses automatic browser discovery.
+
+Use `--svg-font-file` or `VHS_SVG_FONT_FILE` to load an exact font into the capture browser and SVG output.
+This option overrides `Set FontFamily`. Supported file extensions are `.woff2`, `.woff`, `.ttf`, and `.otf`.
+Use a font whose license permits embedding.
+
 ## Record Tapes
 
 VHS has the ability to generate tape files from your terminal actions!
@@ -286,6 +300,7 @@ There are a few basic types of VHS commands:
 - [`Type "<characters>"`](#type): emulate typing
 - [`Left`](#arrow-keys) [`Right`](#arrow-keys) [`Up`](#arrow-keys) [`Down`](#arrow-keys): arrow keys
 - [`Backspace`](#backspace) [`Enter`](#enter) [`Tab`](#tab) [`Space`](#space): special keys
+- [`ScrollUp`](#scroll-up--down) [`ScrollDown`](#scroll-up--down): scroll terminal viewport
 - [`Ctrl[+Alt][+Shift]+<char>`](#ctrl): press control + key and/or modifier
 - [`Sleep <time>`](#sleep): wait for a certain amount of time
 - [`Wait[+Screen][+Line] /regex/`](#wait): wait for specific conditions
@@ -426,6 +441,34 @@ Set Height 1000
   <source media="(prefers-color-scheme: light)" srcset="https://stuff.charm.sh/vhs/examples/height.gif">
   <img width="300" alt="Example of changing the height of the terminal" src="https://stuff.charm.sh/vhs/examples/height.gif">
 </picture>
+
+#### Set Columns
+
+Set the width of the terminal in columns (character cells) with the `Set
+Columns` command. VHS derives the final pixel width from the current font
+settings (`FontSize`, `FontFamily`, `LetterSpacing`) plus `Padding`/`Margin`.
+
+```elixir
+Set Columns 100
+```
+
+`Set Columns` cannot be combined with `Set Width` — use one or the other to
+control the terminal's width. It can be freely combined with `Set Height`
+or `Set Rows` to control height.
+
+#### Set Rows
+
+Set the height of the terminal in rows (character cells) with the `Set Rows`
+command. VHS derives the final pixel height from the current font settings
+(`FontSize`, `FontFamily`, `LineHeight`) plus `Padding`/`Margin`/`WindowBar`.
+
+```elixir
+Set Rows 40
+```
+
+`Set Rows` cannot be combined with `Set Height` — use one or the other to
+control the terminal's height. It can be freely combined with `Set Width`
+or `Set Columns` to control width.
 
 #### Set Letter Spacing
 
@@ -592,6 +635,10 @@ Set the rate at which VHS captures frames with the `Set Framerate` command.
 Set Framerate 60
 ```
 
+VHS records visible elapsed time. `Hide` excludes time until `Show`.
+When capture is slow, raster output repeats frames to preserve playback time.
+SVG output uses capture timestamps. `Framerate` controls the capture limit and raster playback rate.
+
 #### Set Playback Speed
 
 Set the playback speed of the final render.
@@ -625,6 +672,18 @@ Set CursorBlink false
   <source media="(prefers-color-scheme: light)" srcset="https://vhs.charm.sh/vhs-3rMCb80VEkaDdTOJMCrxKy.gif">
   <img width="600" alt="Example of setting the cursor blink." src="https://vhs.charm.sh/vhs-3rMCb80VEkaDdTOJMCrxKy.gif">
 </picture>
+
+#### ProgressBar
+
+Add a one-pixel progress bar at the bottom of the SVG terminal viewport:
+
+```elixir
+Set ProgressBar "#9B79FF"
+```
+
+Use a quoted `#RGB`, `#RRGGBB`, or `#RRGGBBAA` hex color. The bar is off by
+default and applies only to SVG output. It uses the terminal animation's
+`PlaybackSpeed` and `LoopOffset` timing.
 
 ### Type
 
@@ -766,14 +825,26 @@ PageUp 3
 PageDown 5
 ```
 
+#### Scroll Up / Down
+
+Scroll the terminal viewport directly with `ScrollUp` and `ScrollDown`.
+Both commands use the same optional `@time` and repeat count shape as other
+repeatable key commands: `ScrollUp[@<time>] [count]`.
+
+```elixir
+ScrollUp 10
+ScrollDown 4
+ScrollDown@100ms 12
+```
+
 ### Wait
 
 The `Wait` command allows you to wait for something to appear on the screen.
 This is useful when you need to wait on something to complete, even if you don't
 know how long it'll take, while including it in the recording like a spinner or
 loading state.
-The command takes a regular expression as an argument, and optionally allows to
-set the duration to wait and if you want to check the whole screen or just the
+The command takes a regular expression as an argument, and optionally allows you
+to set the duration to wait and if you want to check the whole screen or just the
 last line (the scope).
 
 ```elixir

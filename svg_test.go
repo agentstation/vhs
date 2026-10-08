@@ -345,9 +345,9 @@ func TestSVGGenerator_AnimationTiming(t *testing.T) {
 			frames     int
 			expected   string
 		}{
-			{"25% offset", 0.25, 10.0, 100, "-2.5s"},
-			{"50% offset", 0.5, 10.0, 100, "-5s"},
-			{"frame offset 10", 10.0, 10.0, 100, "-1s"},
+			{"25% offset", 25.0, 10.0, 100, "-2.5s"},
+			{"50% offset", 50.0, 10.0, 100, "-5s"},
+			{"10% offset", 10.0, 10.0, 100, "-1s"},
 			{"no offset", 0.0, 10.0, 100, "0s"},
 		}
 
@@ -415,9 +415,9 @@ func TestSVGGenerator_FrameProcessing(t *testing.T) {
 			t.Errorf("Expected 2 unique states, got %d", len(gen.states))
 		}
 
-		// Should have 3 timeline entries (frame 0, frame 2, 100%)
-		if len(gen.timeline) != 3 {
-			t.Errorf("Expected 3 timeline entries, got %d", len(gen.timeline))
+		// Keep each state change and the final hold at 100%.
+		if len(gen.timeline) != 4 {
+			t.Errorf("Expected 4 timeline entries, got %d", len(gen.timeline))
 		}
 	})
 
@@ -613,7 +613,7 @@ func TestMakeSVG(t *testing.T) {
 		}
 	})
 
-	t.Run("skips when no frames captured", func(t *testing.T) {
+	t.Run("reports when no frames captured", func(t *testing.T) {
 		vhs := &VHS{
 			Options: &Options{
 				Video: VideoOptions{
@@ -626,8 +626,8 @@ func TestMakeSVG(t *testing.T) {
 		}
 
 		err := MakeSVG(vhs)
-		if err != nil {
-			t.Errorf("MakeSVG should not error when no frames: %v", err)
+		if err == nil {
+			t.Error("MakeSVG should report missing frames")
 		}
 	})
 }
@@ -1044,39 +1044,39 @@ func TestFormatPercentage(t *testing.T) {
 		{"whole number 0", 0.0, 100, "0"},
 		{"whole number 100", 100.0, 1000, "100"},
 		{"whole number 50", 50.0, 10000, "50"},
-		
+
 		// Small frame counts (< 100) - 1 decimal
 		{"small count decimal", 12.345, 50, "12.3"},
 		{"small count trailing", 10.5000, 75, "10.5"},
-		
+
 		// Medium frame counts (< 1000) - 2 decimals
 		{"medium count decimal", 0.024038, 500, "0.02"},
 		{"medium count precision", 2.456, 800, "2.46"},
 		{"medium count trailing", 10.1000, 900, "10.1"},
-		
+
 		// Large frame counts (< 10000) - 3 decimals
 		{"large count decimal", 0.024038, 4161, "0.024"},
 		{"large count precision", 2.451923, 5000, "2.452"},
 		{"large count trailing", 99.9000, 8000, "99.9"},
-		
+
 		// Very large frame counts (< 100000) - 4 decimals
 		{"very large decimal", 0.00012, 50000, "0.0001"},
 		{"very large precision", 33.33333, 75000, "33.3333"},
-		
+
 		// Huge frame counts (>= 100000) - 5 decimals
 		{"huge count decimal", 0.000012, 150000, "0.00001"},
 		{"huge count precision", 12.345678, 200000, "12.34568"},
-		
+
 		// Edge cases
 		{"negative percentage", -5.5, 100, "-5.5"},
 		{"zero with decimals", 0.0001, 1000, "0"},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			result := formatPercentage(tc.input, tc.keyframeCount)
 			if result != tc.expected {
-				t.Errorf("formatPercentage(%f, %d) = %s; want %s", 
+				t.Errorf("formatPercentage(%f, %d) = %s; want %s",
 					tc.input, tc.keyframeCount, result, tc.expected)
 			}
 		})
@@ -1094,24 +1094,24 @@ func TestFormatPercentageDynamicPrecision(t *testing.T) {
 		{"large animation", 4161},
 		{"very large animation", 50000},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			percentages := make(map[string]bool)
-			
+
 			for i := 0; i < tc.frameCount; i++ {
 				percentage := float64(i) / float64(tc.frameCount-1) * 100
 				formatted := formatPercentage(percentage, tc.frameCount)
-				
+
 				if percentages[formatted] {
-					t.Errorf("Duplicate percentage at frame %d/%d: %s (%.6f%%)", 
+					t.Errorf("Duplicate percentage at frame %d/%d: %s (%.6f%%)",
 						i, tc.frameCount, formatted, percentage)
 				}
 				percentages[formatted] = true
 			}
-			
+
 			if len(percentages) != tc.frameCount {
-				t.Errorf("Expected %d unique percentages, got %d", 
+				t.Errorf("Expected %d unique percentages, got %d",
 					tc.frameCount, len(percentages))
 			}
 		})
@@ -1123,19 +1123,19 @@ func TestLargeAnimationPercentages(t *testing.T) {
 	// Test that 4161 frames produce unique percentages
 	percentages := make(map[string]bool)
 	totalFrames := 4161
-	
+
 	for i := 0; i < totalFrames; i++ {
 		percentage := float64(i) / float64(totalFrames-1) * 100
 		formatted := formatPercentage(percentage, totalFrames)
-		
+
 		if percentages[formatted] {
 			t.Errorf("Duplicate percentage at frame %d: %s (%.6f%%)", i, formatted, percentage)
 		}
 		percentages[formatted] = true
 	}
-	
+
 	if len(percentages) != totalFrames {
-		t.Errorf("Expected %d unique percentages, got %d", 
+		t.Errorf("Expected %d unique percentages, got %d",
 			totalFrames, len(percentages))
 	}
 }
@@ -1152,16 +1152,17 @@ func TestSVGKeyframeGeneration(t *testing.T) {
 			CharHeight: 20,
 			CursorX:    i % 10,
 			CursorY:    0,
+			Timestamp:  float64(i) / float64(len(opts.Frames)-1),
 		}
 	}
-	
+
 	gen := NewSVGGenerator(opts)
 	svg := gen.Generate()
-	
+
 	// Verify no duplicate keyframe percentages
 	keyframeRegex := regexp.MustCompile(`(\d+(?:\.\d+)?)\%\s*\{`)
 	matches := keyframeRegex.FindAllStringSubmatch(svg, -1)
-	
+
 	seen := make(map[string]bool)
 	duplicates := 0
 	for _, match := range matches {
@@ -1173,21 +1174,21 @@ func TestSVGKeyframeGeneration(t *testing.T) {
 		}
 		seen[match[1]] = true
 	}
-	
+
 	if duplicates > 0 {
-		t.Errorf("Found %d duplicate keyframe percentages out of %d total keyframes", 
+		t.Errorf("Found %d duplicate keyframe percentages out of %d total keyframes",
 			duplicates, len(matches))
 	}
-	
+
 	// Verify animation is present
 	if !strings.Contains(svg, "@keyframes slide") {
 		t.Error("SVG missing @keyframes slide animation")
 	}
-	
+
 	// Verify reasonable number of keyframes were generated
 	// With deduplication, we should have fewer keyframes than frames
 	if len(matches) > len(opts.Frames) {
-		t.Errorf("Too many keyframes generated: %d keyframes for %d frames", 
+		t.Errorf("Too many keyframes generated: %d keyframes for %d frames",
 			len(matches), len(opts.Frames))
 	}
 }
@@ -1204,10 +1205,10 @@ func TestSVGGenerator_PatternDetection(t *testing.T) {
 			{Lines: []string{"$ hell"}, CursorX: 6, CursorY: 0, Timestamp: 0.4, CharWidth: 8.8, CharHeight: 20},
 			{Lines: []string{"$ hello"}, CursorX: 7, CursorY: 0, Timestamp: 0.5, CharWidth: 8.8, CharHeight: 20},
 		}
-		
+
 		gen := NewSVGGenerator(opts)
 		gen.detectPatterns()
-		
+
 		// Should detect one typing pattern
 		typingPatterns := 0
 		for _, p := range gen.patterns {
@@ -1223,12 +1224,12 @@ func TestSVGGenerator_PatternDetection(t *testing.T) {
 				}
 			}
 		}
-		
+
 		if typingPatterns != 1 {
 			t.Errorf("Expected 1 typing pattern, got %d", typingPatterns)
 		}
 	})
-	
+
 	t.Run("detects multiple typing patterns", func(t *testing.T) {
 		opts := createTestSVGConfig()
 		opts.Frames = []SVGFrame{
@@ -1244,10 +1245,10 @@ func TestSVGGenerator_PatternDetection(t *testing.T) {
 			{Lines: []string{"$ ls", "file1.txt", "file2.txt", "$ ca"}, CursorX: 4, CursorY: 3, Timestamp: 0.6, CharWidth: 8.8, CharHeight: 20},
 			{Lines: []string{"$ ls", "file1.txt", "file2.txt", "$ cat"}, CursorX: 5, CursorY: 3, Timestamp: 0.7, CharWidth: 8.8, CharHeight: 20},
 		}
-		
+
 		gen := NewSVGGenerator(opts)
 		gen.detectPatterns()
-		
+
 		// Should detect two typing patterns
 		typingPatterns := 0
 		var detectedTexts []string
@@ -1257,11 +1258,11 @@ func TestSVGGenerator_PatternDetection(t *testing.T) {
 				detectedTexts = append(detectedTexts, p.Text)
 			}
 		}
-		
+
 		if typingPatterns != 2 {
 			t.Errorf("Expected 2 typing patterns, got %d", typingPatterns)
 		}
-		
+
 		// Check the detected text
 		if len(detectedTexts) == 2 {
 			if detectedTexts[0] != "ls" {
@@ -1272,17 +1273,17 @@ func TestSVGGenerator_PatternDetection(t *testing.T) {
 			}
 		}
 	})
-	
+
 	t.Run("does not detect pattern with too few frames", func(t *testing.T) {
 		opts := createTestSVGConfig()
 		opts.Frames = []SVGFrame{
 			{Lines: []string{"$ "}, CursorX: 2, CursorY: 0, Timestamp: 0.0, CharWidth: 8.8, CharHeight: 20},
 			{Lines: []string{"$ h"}, CursorX: 3, CursorY: 0, Timestamp: 0.1, CharWidth: 8.8, CharHeight: 20},
 		}
-		
+
 		gen := NewSVGGenerator(opts)
 		gen.detectPatterns()
-		
+
 		// Should not detect typing pattern (too few frames)
 		for _, p := range gen.patterns {
 			if p.Type == PatternTyping {
@@ -1290,7 +1291,7 @@ func TestSVGGenerator_PatternDetection(t *testing.T) {
 			}
 		}
 	})
-	
+
 	t.Run("handles mixed typing and static frames", func(t *testing.T) {
 		opts := createTestSVGConfig()
 		opts.Frames = []SVGFrame{
@@ -1305,10 +1306,10 @@ func TestSVGGenerator_PatternDetection(t *testing.T) {
 			// Static frame
 			{Lines: []string{"Welcome", "$ echo", "Hello"}, CursorX: 0, CursorY: 2, Timestamp: 1.5, CharWidth: 8.8, CharHeight: 20},
 		}
-		
+
 		gen := NewSVGGenerator(opts)
 		gen.detectPatterns()
-		
+
 		typingCount := 0
 		staticCount := 0
 		for _, p := range gen.patterns {
@@ -1318,11 +1319,11 @@ func TestSVGGenerator_PatternDetection(t *testing.T) {
 				staticCount++
 			}
 		}
-		
+
 		if typingCount != 1 {
 			t.Errorf("Expected 1 typing pattern, got %d", typingCount)
 		}
-		
+
 		// Static frames: first frame, and last frame (total 2)
 		if staticCount != 2 {
 			t.Errorf("Expected 2 static patterns, got %d", staticCount)
@@ -1341,10 +1342,10 @@ func TestSVGGenerator_TypingAnimationCSS(t *testing.T) {
 			{Lines: []string{"$ tes"}, CursorX: 5, CursorY: 0, Timestamp: 0.3, CharWidth: 8.8, CharHeight: 20},
 			{Lines: []string{"$ test"}, CursorX: 6, CursorY: 0, Timestamp: 0.4, CharWidth: 8.8, CharHeight: 20},
 		}
-		
+
 		gen := NewSVGGenerator(opts)
 		svg := gen.Generate()
-		
+
 		// Should contain typing animation CSS
 		assertContains(t, svg, "@keyframes typing_", "SVG should contain typing animation keyframes")
 		assertContains(t, svg, ".typing_", "SVG should contain typing animation class")
@@ -1352,7 +1353,7 @@ func TestSVGGenerator_TypingAnimationCSS(t *testing.T) {
 		assertContains(t, svg, "white-space: nowrap", "Typing animation should have nowrap")
 		assertContains(t, svg, "steps(", "Typing animation should use steps timing")
 	})
-	
+
 	t.Run("calculates correct animation duration", func(t *testing.T) {
 		opts := createTestSVGConfig()
 		opts.Frames = []SVGFrame{
@@ -1361,14 +1362,14 @@ func TestSVGGenerator_TypingAnimationCSS(t *testing.T) {
 			{Lines: []string{"$ hi"}, CursorX: 4, CursorY: 0, Timestamp: 1.0, CharWidth: 8.8, CharHeight: 20},
 			{Lines: []string{"$ hi!"}, CursorX: 5, CursorY: 0, Timestamp: 1.5, CharWidth: 8.8, CharHeight: 20},
 		}
-		
+
 		gen := NewSVGGenerator(opts)
 		svg := gen.Generate()
-		
+
 		// Should have animation duration of 1.5s (from timestamp 0.0 to 1.5)
 		assertContains(t, svg, "animation: typing_0 1.5s", "Animation duration should be 1.5s")
 	})
-	
+
 	t.Run("backspace breaks typing pattern", func(t *testing.T) {
 		opts := createTestSVGConfig()
 		opts.Frames = []SVGFrame{
@@ -1381,10 +1382,10 @@ func TestSVGGenerator_TypingAnimationCSS(t *testing.T) {
 			{Lines: []string{"$ hel"}, CursorX: 5, CursorY: 0, Timestamp: 0.5, CharWidth: 8.8, CharHeight: 20},
 			{Lines: []string{"$ help"}, CursorX: 6, CursorY: 0, Timestamp: 0.6, CharWidth: 8.8, CharHeight: 20},
 		}
-		
+
 		gen := NewSVGGenerator(opts)
 		gen.detectPatterns()
-		
+
 		// Should detect multiple patterns due to backspace
 		typingPatterns := 0
 		for _, p := range gen.patterns {
@@ -1392,18 +1393,18 @@ func TestSVGGenerator_TypingAnimationCSS(t *testing.T) {
 				typingPatterns++
 			}
 		}
-		
+
 		// Backspace should break the pattern into multiple segments
 		if typingPatterns < 2 {
 			t.Errorf("Expected at least 2 typing patterns due to backspace, got %d", typingPatterns)
 		}
-		
+
 		// First pattern should end before the backspace
 		if gen.patterns[0].Type == PatternTyping && gen.patterns[0].EndFrame >= 4 {
 			t.Error("First typing pattern should end before backspace at frame 4")
 		}
 	})
-	
+
 	t.Run("detects backspace pattern", func(t *testing.T) {
 		opts := createTestSVGConfig()
 		opts.Frames = []SVGFrame{
@@ -1414,10 +1415,10 @@ func TestSVGGenerator_TypingAnimationCSS(t *testing.T) {
 			{Lines: []string{"$ h"}, CursorX: 3, CursorY: 0, Timestamp: 0.4, CharWidth: 8.8, CharHeight: 20},
 			{Lines: []string{"$ "}, CursorX: 2, CursorY: 0, Timestamp: 0.5, CharWidth: 8.8, CharHeight: 20},
 		}
-		
+
 		gen := NewSVGGenerator(opts)
 		gen.detectPatterns()
-		
+
 		// Should detect one backspace pattern
 		backspacePatterns := 0
 		for _, p := range gen.patterns {
@@ -1433,11 +1434,11 @@ func TestSVGGenerator_TypingAnimationCSS(t *testing.T) {
 				}
 			}
 		}
-		
+
 		if backspacePatterns != 1 {
 			t.Errorf("Expected 1 backspace pattern, got %d", backspacePatterns)
 		}
-		
+
 		// Check CSS generation
 		svg := gen.Generate()
 		assertContains(t, svg, "@keyframes backspace_", "Should generate backspace animation")
@@ -1445,7 +1446,7 @@ func TestSVGGenerator_TypingAnimationCSS(t *testing.T) {
 		assertContains(t, svg, "from { width:", "Backspace should animate width")
 		assertContains(t, svg, "to { width: 0", "Backspace should animate to zero width")
 	})
-	
+
 	t.Run("handles deletion mid-word", func(t *testing.T) {
 		opts := createTestSVGConfig()
 		opts.Frames = []SVGFrame{
@@ -1461,10 +1462,10 @@ func TestSVGGenerator_TypingAnimationCSS(t *testing.T) {
 			{Lines: []string{"$ heol"}, CursorX: 6, CursorY: 0, Timestamp: 0.7, CharWidth: 8.8, CharHeight: 20},
 			{Lines: []string{"$ heolp"}, CursorX: 7, CursorY: 0, Timestamp: 0.8, CharWidth: 8.8, CharHeight: 20},
 		}
-		
+
 		gen := NewSVGGenerator(opts)
 		gen.detectPatterns()
-		
+
 		// Deletion should create separate patterns
 		typingCount := 0
 		for _, p := range gen.patterns {
@@ -1472,7 +1473,7 @@ func TestSVGGenerator_TypingAnimationCSS(t *testing.T) {
 				typingCount++
 			}
 		}
-		
+
 		if typingCount < 2 {
 			t.Errorf("Expected at least 2 typing patterns due to deletion, got %d", typingCount)
 		}
