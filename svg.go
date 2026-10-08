@@ -67,6 +67,9 @@ type SVGConfig struct {
 	LoopOffset    float64
 	OptimizeSize  bool // Enable size optimizations for smaller output
 	Debug         bool // Enable debug logging
+	FontData      string
+	FontMIME      string
+	FontFormat    string
 }
 
 // TerminalState represents a unique terminal state for deduplication.
@@ -103,16 +106,16 @@ type FramePattern struct {
 	EndFrame   int
 	StartTime  float64
 	EndTime    float64
-	
+
 	// For typing patterns
 	Line     int
 	StartCol int
 	Text     string
-	
+
 	// For backspace patterns
 	DeletedText  string // Text that was deleted
 	DeletedCount int    // Number of characters deleted
-	
+
 	// Store the initial and final states
 	InitialState TerminalState
 	FinalState   TerminalState
@@ -182,6 +185,14 @@ func NewSVGGenerator(opts SVGConfig) *SVGGenerator {
 		cursorActiveClass:   cursorActiveClass,
 		cursorIdleClass:     cursorIdleClass,
 	}
+}
+
+// framePercentage places each state at its capture time.
+func (g *SVGGenerator) framePercentage(index int) float64 {
+	if index == 0 || g.options.Duration <= 0 {
+		return 0
+	}
+	return min(100, max(0, g.options.Frames[index].Timestamp/g.options.Duration*100))
 }
 
 // Generate creates the complete SVG animation.
@@ -328,7 +339,7 @@ func (g *SVGGenerator) Generate() string {
 func (g *SVGGenerator) processFrames() {
 	// First, detect patterns for optimization
 	g.detectPatterns()
-	
+
 	// First pass: collect all unique states and track when they change
 	lastStateIndex := -1
 	lastCursorIdleTime := 0.0
@@ -406,7 +417,7 @@ func (g *SVGGenerator) processFrames() {
 			// Reuse existing state - only add to timeline if state changed
 			if idx != lastStateIndex {
 				g.timeline = append(g.timeline, KeyframeStop{
-					Percentage: float64(i) / float64(len(g.options.Frames)-1) * 100,
+					Percentage: g.framePercentage(i),
 					StateIndex: idx,
 				})
 				lastStateIndex = idx
@@ -433,7 +444,7 @@ func (g *SVGGenerator) processFrames() {
 			}
 
 			g.timeline = append(g.timeline, KeyframeStop{
-				Percentage: float64(i) / float64(len(g.options.Frames)-1) * 100,
+				Percentage: g.framePercentage(i),
 				StateIndex: idx,
 			})
 			lastStateIndex = idx
@@ -528,12 +539,12 @@ func (g *SVGGenerator) hashState(state *TerminalState) string {
 // detectPatterns analyzes frames to find typing and other patterns.
 func (g *SVGGenerator) detectPatterns() {
 	g.patterns = []FramePattern{}
-	
+
 	if len(g.options.Frames) < 2 {
 		// Not enough frames to detect patterns
 		return
 	}
-	
+
 	i := 0
 	for i < len(g.options.Frames) {
 		// Try to detect typing pattern
@@ -542,14 +553,14 @@ func (g *SVGGenerator) detectPatterns() {
 			i += consumed
 			continue
 		}
-		
+
 		// Try to detect backspace pattern
 		if pattern, consumed := g.detectBackspacePattern(i); pattern != nil {
 			g.patterns = append(g.patterns, *pattern)
 			i += consumed
 			continue
 		}
-		
+
 		// If no pattern detected, treat as static frame
 		frame := g.options.Frames[i]
 		g.patterns = append(g.patterns, FramePattern{
@@ -568,7 +579,7 @@ func (g *SVGGenerator) detectPatterns() {
 		})
 		i++
 	}
-	
+
 	if g.options.Debug {
 		typingPatterns := 0
 		typingFrames := 0
@@ -602,37 +613,37 @@ func (g *SVGGenerator) detectTypingPattern(start int) (*FramePattern, int) {
 	if start >= len(g.options.Frames)-1 {
 		return nil, 0
 	}
-	
+
 	firstFrame := g.options.Frames[start]
 	line := firstFrame.CursorY
 	startCol := firstFrame.CursorX
-	
+
 	// Track the typing sequence
 	end := start + 1
 	for end < len(g.options.Frames) {
 		prev := g.options.Frames[end-1]
 		curr := g.options.Frames[end]
-		
+
 		// Check if still typing on the same line
 		if curr.CursorY != line {
 			break
 		}
-		
+
 		// Cursor should move forward (or stay for multi-byte chars)
 		if curr.CursorX < prev.CursorX-1 { // Allow small backward movement for corrections
 			break
 		}
-		
+
 		// Check that only the cursor line changed
 		if !g.isOnlyLineChanged(prev, curr, line) {
 			break
 		}
-		
+
 		// Line should grow (characters added)
 		if line < len(prev.Lines) && line < len(curr.Lines) {
 			prevLine := prev.Lines[line]
 			currLine := curr.Lines[line]
-			
+
 			// Check if current line starts with previous line (typing appends)
 			if !strings.HasPrefix(currLine, prevLine) {
 				// If text got shorter, it's likely a backspace - break the pattern
@@ -642,7 +653,7 @@ func (g *SVGGenerator) detectTypingPattern(start int) (*FramePattern, int) {
 				// If text changed but didn't grow from the previous, break
 				break
 			}
-			
+
 			// Check typing speed is reasonable (1-15 chars per frame is typical)
 			charsChanged := abs(len(currLine) - len(prevLine))
 			if charsChanged > 15 {
@@ -651,24 +662,24 @@ func (g *SVGGenerator) detectTypingPattern(start int) (*FramePattern, int) {
 		} else {
 			break
 		}
-		
+
 		end++
 	}
-	
+
 	// Need at least 3 frames to consider it a typing pattern
 	framesInPattern := end - start
 	if framesInPattern < 3 {
 		return nil, 0
 	}
-	
+
 	// Extract the typed text
 	lastFrame := g.options.Frames[end-1]
 	var typedText string
-	
+
 	if line < len(firstFrame.Lines) && line < len(lastFrame.Lines) {
 		startLine := firstFrame.Lines[line]
 		endLine := lastFrame.Lines[line]
-		
+
 		// Find the common prefix (unchanged part)
 		commonPrefix := 0
 		for i := 0; i < len(startLine) && i < len(endLine); i++ {
@@ -677,7 +688,7 @@ func (g *SVGGenerator) detectTypingPattern(start int) (*FramePattern, int) {
 			}
 			commonPrefix = i
 		}
-		
+
 		// The typed text is what was added after the common prefix
 		if len(endLine) > len(startLine) {
 			typedText = endLine[len(startLine):]
@@ -686,12 +697,12 @@ func (g *SVGGenerator) detectTypingPattern(start int) (*FramePattern, int) {
 			typedText = endLine[commonPrefix:]
 		}
 	}
-	
+
 	// Only create pattern if we actually typed something substantial
 	if len(typedText) < 2 {
 		return nil, 0
 	}
-	
+
 	// Create initial and final states
 	initialState := TerminalState{
 		Lines:      firstFrame.Lines,
@@ -700,7 +711,7 @@ func (g *SVGGenerator) detectTypingPattern(start int) (*FramePattern, int) {
 		CursorY:    firstFrame.CursorY,
 		CursorChar: firstFrame.CursorChar,
 	}
-	
+
 	finalState := TerminalState{
 		Lines:      lastFrame.Lines,
 		LineColors: lastFrame.LineColors,
@@ -708,7 +719,7 @@ func (g *SVGGenerator) detectTypingPattern(start int) (*FramePattern, int) {
 		CursorY:    lastFrame.CursorY,
 		CursorChar: lastFrame.CursorChar,
 	}
-	
+
 	pattern := &FramePattern{
 		Type:         PatternTyping,
 		StartFrame:   start,
@@ -721,12 +732,12 @@ func (g *SVGGenerator) detectTypingPattern(start int) (*FramePattern, int) {
 		InitialState: initialState,
 		FinalState:   finalState,
 	}
-	
+
 	if g.options.Debug {
 		log.Printf("Detected typing pattern: frames %d-%d, line %d, text: %q (saved %d frames)",
 			start, end-1, line, typedText, framesInPattern-2)
 	}
-	
+
 	return pattern, framesInPattern
 }
 
@@ -735,48 +746,48 @@ func (g *SVGGenerator) detectBackspacePattern(start int) (*FramePattern, int) {
 	if start >= len(g.options.Frames)-1 {
 		return nil, 0
 	}
-	
+
 	firstFrame := g.options.Frames[start]
 	line := firstFrame.CursorY
-	
+
 	// Track the backspace sequence
 	end := start + 1
 	totalDeleted := 0
-	
+
 	for end < len(g.options.Frames) {
 		prev := g.options.Frames[end-1]
 		curr := g.options.Frames[end]
-		
+
 		// Check if still on the same line
 		if curr.CursorY != line {
 			break
 		}
-		
+
 		// Check that only the cursor line changed
 		if !g.isOnlyLineChanged(prev, curr, line) {
 			break
 		}
-		
+
 		// Check if text is getting shorter (backspace pattern)
 		if line < len(prev.Lines) && line < len(curr.Lines) {
 			prevLine := prev.Lines[line]
 			currLine := curr.Lines[line]
-			
+
 			// For backspace, current line should be shorter
 			if len(currLine) >= len(prevLine) {
 				break
 			}
-			
+
 			// Check if it's a prefix (deleting from end)
 			if !strings.HasPrefix(prevLine, currLine) {
 				// Could be deletion in middle, but for now we'll break
 				break
 			}
-			
+
 			// Track how many characters were deleted
 			deleted := len(prevLine) - len(currLine)
 			totalDeleted += deleted
-			
+
 			// Don't group huge deletions (likely line clear, not backspace)
 			if deleted > 10 {
 				break
@@ -784,34 +795,34 @@ func (g *SVGGenerator) detectBackspacePattern(start int) (*FramePattern, int) {
 		} else {
 			break
 		}
-		
+
 		end++
 	}
-	
+
 	// Need at least 2 frames to consider it a backspace pattern
 	framesInPattern := end - start
 	if framesInPattern < 2 {
 		return nil, 0
 	}
-	
+
 	// Need to have deleted at least 2 characters to be worth optimizing
 	if totalDeleted < 2 {
 		return nil, 0
 	}
-	
+
 	// Extract what was deleted
 	lastFrame := g.options.Frames[end-1]
 	var deletedText string
-	
+
 	if line < len(firstFrame.Lines) && line < len(lastFrame.Lines) {
 		startLine := firstFrame.Lines[line]
 		endLine := lastFrame.Lines[line]
-		
+
 		if strings.HasPrefix(startLine, endLine) {
 			deletedText = startLine[len(endLine):]
 		}
 	}
-	
+
 	// Create states
 	initialState := TerminalState{
 		Lines:      firstFrame.Lines,
@@ -820,7 +831,7 @@ func (g *SVGGenerator) detectBackspacePattern(start int) (*FramePattern, int) {
 		CursorY:    firstFrame.CursorY,
 		CursorChar: firstFrame.CursorChar,
 	}
-	
+
 	finalState := TerminalState{
 		Lines:      lastFrame.Lines,
 		LineColors: lastFrame.LineColors,
@@ -828,7 +839,7 @@ func (g *SVGGenerator) detectBackspacePattern(start int) (*FramePattern, int) {
 		CursorY:    lastFrame.CursorY,
 		CursorChar: lastFrame.CursorChar,
 	}
-	
+
 	pattern := &FramePattern{
 		Type:         PatternBackspace,
 		StartFrame:   start,
@@ -841,12 +852,12 @@ func (g *SVGGenerator) detectBackspacePattern(start int) (*FramePattern, int) {
 		InitialState: initialState,
 		FinalState:   finalState,
 	}
-	
+
 	if g.options.Debug {
 		log.Printf("Detected backspace pattern: frames %d-%d, line %d, deleted: %q (saved %d frames)",
 			start, end-1, line, deletedText, framesInPattern-1)
 	}
-	
+
 	return pattern, framesInPattern
 }
 
@@ -856,13 +867,13 @@ func (g *SVGGenerator) isOnlyLineChanged(prev, curr SVGFrame, targetLine int) bo
 	if abs(len(curr.Lines)-len(prev.Lines)) > 1 {
 		return false
 	}
-	
+
 	// Check each line
 	maxLines := len(prev.Lines)
 	if len(curr.Lines) < maxLines {
 		maxLines = len(curr.Lines)
 	}
-	
+
 	for i := 0; i < maxLines; i++ {
 		if i != targetLine {
 			// Other lines should remain unchanged
@@ -871,7 +882,7 @@ func (g *SVGGenerator) isOnlyLineChanged(prev, curr SVGFrame, targetLine int) bo
 			}
 		}
 	}
-	
+
 	return true
 }
 
@@ -888,7 +899,7 @@ func (g *SVGGenerator) generateTypingCSS(sb *strings.Builder, index int, pattern
 	// Calculate the width of the typed text
 	textWidth := float64(len(pattern.Text)) * g.charWidth
 	duration := pattern.EndTime - pattern.StartTime
-	
+
 	// Generate the keyframe animation
 	fmt.Fprintf(sb, "@keyframes typing_%d {", index)
 	g.writeNewline(sb)
@@ -898,7 +909,7 @@ func (g *SVGGenerator) generateTypingCSS(sb *strings.Builder, index int, pattern
 	g.writeNewline(sb)
 	sb.WriteString("}")
 	g.writeNewline(sb)
-	
+
 	// Generate the class for this typing animation
 	fmt.Fprintf(sb, ".typing_%d {", index)
 	g.writeNewline(sb)
@@ -923,7 +934,7 @@ func (g *SVGGenerator) generateBackspaceCSS(sb *strings.Builder, index int, patt
 	// Calculate the width of the deleted text
 	startWidth := float64(len(pattern.DeletedText)) * g.charWidth
 	duration := pattern.EndTime - pattern.StartTime
-	
+
 	// Generate the keyframe animation (reverse of typing)
 	fmt.Fprintf(sb, "@keyframes backspace_%d {", index)
 	g.writeNewline(sb)
@@ -933,7 +944,7 @@ func (g *SVGGenerator) generateBackspaceCSS(sb *strings.Builder, index int, patt
 	g.writeNewline(sb)
 	sb.WriteString("}")
 	g.writeNewline(sb)
-	
+
 	// Generate the class for this backspace animation
 	fmt.Fprintf(sb, ".backspace_%d {", index)
 	g.writeNewline(sb)
@@ -959,7 +970,13 @@ func (g *SVGGenerator) generateStyles() string {
 
 	sb.WriteString("<style>")
 	g.writeNewline(&sb)
-	
+
+	if g.options.FontData != "" {
+		fmt.Fprintf(&sb, `@font-face { font-family: "%s"; src: url("data:%s;base64,%s") format("%s"); }`,
+			captureFontFamily, g.options.FontMIME, g.options.FontData, g.options.FontFormat)
+		g.writeNewline(&sb)
+	}
+
 	// Generate typing animations for detected patterns
 	for i, pattern := range g.patterns {
 		switch pattern.Type {
@@ -978,6 +995,13 @@ func (g *SVGGenerator) generateStyles() string {
 
 	// Build optimized keyframes from timeline
 	keyframeCount := len(g.timeline)
+	// Sparse state changes can still have closely spaced capture timestamps.
+	for i := 1; i < len(g.timeline); i++ {
+		gap := g.timeline[i].Percentage - g.timeline[i-1].Percentage
+		if gap > 0 {
+			keyframeCount = max(keyframeCount, int(100/gap)+1)
+		}
+	}
 	for _, stop := range g.timeline {
 		offset := -float64(stop.StateIndex) * g.frameSpacing
 		sb.WriteString(fmt.Sprintf("  %s%% { transform: translateX(%spx); }",
@@ -998,18 +1022,8 @@ func (g *SVGGenerator) generateStyles() string {
 		animationDuration = g.options.Duration / g.options.PlaybackSpeed
 	}
 
-	// Calculate animation delay based on LoopOffset
-	animationDelay := 0.0
-	if g.options.LoopOffset > 0 {
-		// LoopOffset can be a percentage (0-100) or frame number
-		if g.options.LoopOffset <= 1.0 {
-			// Treat as percentage
-			animationDelay = -animationDuration * g.options.LoopOffset
-		} else {
-			// Treat as frame number
-			animationDelay = -(g.options.LoopOffset / float64(len(g.options.Frames))) * animationDuration
-		}
-	}
+	// LoopOffset uses the same percentage contract as raster output.
+	animationDelay := -animationDuration * g.options.LoopOffset / 100
 
 	// Use step-end timing to ensure frames change instantly
 	sb.WriteString(fmt.Sprintf("  animation: slide %ss step-end %ss infinite;", formatDuration(animationDuration), formatDuration(animationDelay)))
@@ -1553,32 +1567,32 @@ func formatPercentage(val float64, keyframeCount int) string {
 	if val == float64(int(val)) {
 		return fmt.Sprintf("%d", int(val))
 	}
-	
+
 	// Dynamically determine precision based on keyframe count
 	// This ensures we have enough precision to avoid collisions
 	// while keeping the output as compact as possible
 	var precision int
 	switch {
 	case keyframeCount < 100:
-		precision = 1  // Up to 100 unique values
+		precision = 1 // Up to 100 unique values
 	case keyframeCount < 1000:
-		precision = 2  // Up to 1,000 unique values
+		precision = 2 // Up to 1,000 unique values
 	case keyframeCount < 10000:
-		precision = 3  // Up to 10,000 unique values
+		precision = 3 // Up to 10,000 unique values
 	case keyframeCount < 100000:
-		precision = 4  // Up to 100,000 unique values
+		precision = 4 // Up to 100,000 unique values
 	default:
-		precision = 5  // Up to 1,000,000 unique values
+		precision = 5 // Up to 1,000,000 unique values
 	}
-	
+
 	// Format with calculated precision
 	formatStr := fmt.Sprintf("%%.%df", precision)
 	formatted := fmt.Sprintf(formatStr, val)
-	
+
 	// Remove trailing zeros but keep at least 1 decimal for consistency
 	formatted = strings.TrimRight(formatted, "0")
 	formatted = strings.TrimSuffix(formatted, ".")
-	
+
 	return formatted
 }
 
@@ -1754,7 +1768,7 @@ func (g *SVGGenerator) generateWindowBar() string {
 }
 
 // CaptureSVGFrame captures the current terminal state and returns an SVGFrame.
-func CaptureSVGFrame(page *rod.Page, counter int, framerate int) (*SVGFrame, error) {
+func CaptureSVGFrame(page *rod.Page, timestamp float64) (*SVGFrame, error) {
 	// Get cursor position and exact character positions from xterm.js
 	termInfo, err := page.Eval(`() => {
 		const term = window.term;
@@ -2021,7 +2035,7 @@ func CaptureSVGFrame(page *rod.Page, counter int, framerate int) (*SVGFrame, err
 		CursorY:    cursorY,
 		CharWidth:  charWidth,
 		CharHeight: charHeight,
-		Timestamp:  float64(counter) / float64(framerate),
+		Timestamp:  timestamp,
 		CursorChar: cursorChar,
 	}
 

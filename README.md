@@ -215,6 +215,19 @@ scoop install vhs
 
 [releases]: https://github.com/agentstation/vhs/releases
 
+Use `--browser-path` to select the browser executable for capture:
+
+```sh
+vhs --browser-path "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" demo.tape
+```
+
+You can also set `VHS_BROWSER_PATH`. The command-line option takes precedence.
+If both values are empty, VHS uses automatic browser discovery.
+
+Use `--svg-font-file` or `VHS_SVG_FONT_FILE` to load an exact font into the capture browser and SVG output.
+This option overrides `Set FontFamily`. Supported file extensions are `.woff2`, `.woff`, `.ttf`, and `.otf`.
+Use a font whose license permits embedding.
+
 ## Record Tapes
 
 VHS has the ability to generate tape files from your terminal actions!
@@ -592,6 +605,10 @@ Set the rate at which VHS captures frames with the `Set Framerate` command.
 ```elixir
 Set Framerate 60
 ```
+
+VHS records visible elapsed time. `Hide` excludes time until `Show`.
+When capture is slow, raster output repeats frames to preserve playback time.
+SVG output uses capture timestamps. `Framerate` controls the capture limit and raster playback rate.
 
 #### Set Playback Speed
 

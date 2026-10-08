@@ -23,7 +23,7 @@ func Execute(c parser.Command, v *VHS) error {
 		return fmt.Errorf("failed to execute command: %w", err)
 	}
 
-	if v.recording && v.Options.Test.Output != "" {
+	if v.isRecording() && v.Options.Test.Output != "" {
 		err := v.SaveOutput()
 		if err != nil {
 			return fmt.Errorf("failed to save output: %w", err)
@@ -623,6 +623,9 @@ func ExecuteSetFramerate(c parser.Command, v *VHS) error {
 		return fmt.Errorf("failed to parse framerate: %w", err)
 	}
 
+	if framerate <= 0 || framerate > int64(time.Second) {
+		return fmt.Errorf("framerate must be between 1 and %d", time.Second)
+	}
 	v.Options.Video.Framerate = int(framerate)
 	return nil
 }

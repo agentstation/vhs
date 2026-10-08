@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -34,6 +33,10 @@ type VHS struct {
 	totalFrames  int
 	close        func() error
 	svgFrames    []SVGFrame
+	rasterFrames []float64
+	timeline     recordingTimeline
+	duration     time.Duration
+	svgFont      svgFont
 }
 
 // Options is the set of options for the setup.
@@ -55,11 +58,13 @@ type Options struct {
 	Style         StyleOptions
 	SVG           SVGOptions
 	DebugConsole  bool // Enable browser console logging
+	BrowserPath   string
 }
 
 // SVGOptions contains SVG-specific configuration options.
 type SVGOptions struct {
 	OptimizeSize bool
+	FontFile     string
 }
 
 const (
@@ -152,7 +157,10 @@ func (vhs *VHS) Start() error {
 		return fmt.Errorf("could not start tty: %w", err)
 	}
 
-	path, _ := launcher.LookPath()
+	path := captureBrowserPath(vhs.Options.BrowserPath)
+	if path == "" {
+		path, _ = launcher.LookPath()
+	}
 	enableNoSandbox := os.Getenv("VHS_NO_SANDBOX") != ""
 	u, err := launcher.New().Leakless(false).Bin(path).NoSandbox(enableNoSandbox).Launch()
 	if err != nil {
@@ -229,8 +237,13 @@ func (vhs *VHS) terminate() error {
 	time.Sleep(cleanupWaitTime)
 
 	// Tear down the processes we started.
-	vhs.browser.MustClose()
-	return vhs.tty.Process.Kill()
+	if vhs.browser != nil {
+		_ = vhs.browser.Close()
+	}
+	if vhs.tty != nil && vhs.tty.Process != nil {
+		return vhs.tty.Process.Kill()
+	}
+	return nil
 }
 
 // Cleanup individual frames.
@@ -247,6 +260,9 @@ func (vhs *VHS) Cleanup() error {
 // Render starts rendering the individual frames into a video.
 func (vhs *VHS) Render() error {
 	// Apply Loop Offset by modifying frame sequence
+	if err := vhs.prepareRasterFrames(); err != nil {
+		return err
+	}
 	if err := vhs.ApplyLoopOffset(); err != nil {
 		return err
 	}
@@ -270,7 +286,7 @@ func (vhs *VHS) Render() error {
 		}
 		out, err := cmd.CombinedOutput()
 		if err != nil {
-			log.Println(string(out))
+			return fmt.Errorf("failed to render output: %w: %s", err, out)
 		}
 	}
 
@@ -285,6 +301,9 @@ func (vhs *VHS) Render() error {
 // ApplyLoopOffset by modifying frame sequence.
 func (vhs *VHS) ApplyLoopOffset() error {
 	if vhs.totalFrames <= 0 {
+		if len(vhs.svgFrames) > 0 {
+			return nil
+		}
 		return errors.New("no frames")
 	}
 
@@ -353,100 +372,30 @@ func (vhs *VHS) ApplyLoopOffset() error {
 	}
 }
 
-const quality = 1.0
-
-// Record begins the goroutine which captures images from the xterm.js canvases.
-func (vhs *VHS) Record(ctx context.Context) <-chan error {
-	ch := make(chan error)
-	interval := time.Second / time.Duration(vhs.Options.Video.Framerate)
-
-	//nolint: mnd
-	go func() {
-		counter := 0
-		start := time.Now()
-		for {
-			select {
-			case <-ctx.Done():
-				_ = vhs.terminate()
-
-				// Save total # of frames for offset calculation
-				vhs.totalFrames = counter
-
-				// Signal caller that we're done recording.
-				close(ch)
-				return
-
-			case <-time.After(interval - time.Since(start)):
-				// record last attempt
-				start = time.Now()
-
-				if !vhs.recording {
-					continue
-				}
-				if vhs.Page == nil {
-					continue
-				}
-
-				cursor, cursorErr := vhs.CursorCanvas.CanvasToImage("image/png", quality)
-				text, textErr := vhs.TextCanvas.CanvasToImage("image/png", quality)
-				if textErr != nil || cursorErr != nil {
-					ch <- fmt.Errorf("error: %v, %v", textErr, cursorErr)
-					continue
-				}
-
-				counter++
-				if err := os.WriteFile(
-					filepath.Join(vhs.Options.Video.Input, fmt.Sprintf(cursorFrameFormat, counter)),
-					cursor,
-					0o600,
-				); err != nil {
-					ch <- fmt.Errorf("error writing cursor frame: %w", err)
-					continue
-				}
-				if err := os.WriteFile(
-					filepath.Join(vhs.Options.Video.Input, fmt.Sprintf(textFrameFormat, counter)),
-					text,
-					0o600,
-				); err != nil {
-					ch <- fmt.Errorf("error writing text frame: %w", err)
-					continue
-				}
-
-				// Capture SVG frame data if SVG output is requested
-				if vhs.Options.Video.Output.SVG != "" {
-					svgFrame, err := CaptureSVGFrame(vhs.Page, counter, vhs.Options.Video.Framerate)
-					if err != nil {
-						log.Printf("Error capturing SVG frame %d: %v", counter, err)
-					} else if svgFrame != nil {
-						vhs.svgFrames = append(vhs.svgFrames, *svgFrame)
-					}
-				}
-
-				// Capture current frame and disable frame capturing
-				if vhs.Options.Screenshot.frameCapture {
-					vhs.Options.Screenshot.makeScreenshot(counter)
-				}
-			}
-		}
-	}()
-
-	return ch
-}
-
-// ResumeRecording indicates to VHS that the recording should be resumed.
+// ResumeRecording resumes frame capture and the visible timeline.
 func (vhs *VHS) ResumeRecording() {
 	vhs.mutex.Lock()
 	defer vhs.mutex.Unlock()
-
-	vhs.recording = true
+	if !vhs.recording {
+		vhs.timeline.resume(time.Now())
+		vhs.recording = true
+	}
 }
 
-// PauseRecording indicates to VHS that the recording should be paused.
+// PauseRecording excludes hidden commands from the visible timeline.
 func (vhs *VHS) PauseRecording() {
 	vhs.mutex.Lock()
 	defer vhs.mutex.Unlock()
+	if vhs.recording {
+		vhs.timeline.pause(time.Now())
+		vhs.recording = false
+	}
+}
 
-	vhs.recording = false
+func (vhs *VHS) isRecording() bool {
+	vhs.mutex.Lock()
+	defer vhs.mutex.Unlock()
+	return vhs.recording
 }
 
 // ScreenshotNextFrame indicates to VHS that screenshot of next frame must be taken.
