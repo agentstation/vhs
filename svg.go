@@ -157,6 +157,9 @@ func NewSVGGenerator(opts SVGConfig) *SVGGenerator {
 	// Get character dimensions from the first frame if available
 	charWidth := float64(opts.FontSize) * 0.55 // fallback
 	charHeight := float64(opts.FontSize) * 1.2 // fallback
+	if validSVGCellSize(opts.LineHeight) {
+		charHeight *= opts.LineHeight
+	}
 
 	if len(opts.Frames) > 0 {
 		if validSVGCellSize(opts.Frames[0].CharWidth) {
@@ -1243,11 +1246,7 @@ func (g *SVGGenerator) generateState(index int, state *TerminalState) string {
 		// Render if line has content, is cursor line, or has background colors
 		if strings.TrimSpace(line) != "" || isCursorLine || hasBackgroundColors {
 			// Render with colors using natural text flow
-			lineHeight := g.options.LineHeight
-			if lineHeight <= 0 {
-				lineHeight = 1.0
-			}
-			yPos := float64(y)*g.charHeight*lineHeight + g.charHeight*0.8
+			yPos := float64(y)*g.charHeight + g.charHeight*0.8
 
 			// First, render any background rectangles if we have color data
 			if hasColors && y < len(state.LineColors) {
@@ -1271,7 +1270,7 @@ func (g *SVGGenerator) generateState(index int, state *TerminalState) string {
 						}
 						charX := float64(x) * g.charWidth
 						_, _ = fmt.Fprintf(&sb, `<rect x="%s" y="%s" width="%s" height="%s" fill="%s" shape-rendering="crispEdges"/>`,
-							formatCoord(charX), formatCoord(float64(y)*g.charHeight*lineHeight), formatCoord(g.charWidth), formatCoord(g.charHeight), style.BgColor)
+							formatCoord(charX), formatCoord(float64(y)*g.charHeight), formatCoord(g.charWidth), formatCoord(g.charHeight), style.BgColor)
 						g.writeNewline(&sb)
 					}
 				}
@@ -1334,8 +1333,11 @@ func (g *SVGGenerator) generateState(index int, state *TerminalState) string {
 					cursorClass = g.cursorIdleClass
 				}
 
-				// Get cursor color (cursor is rendered as a block with foreground color)
-				cursorBgColor := g.options.Theme.Foreground
+				// Use the authored cursor color, then the text color as a fallback.
+				cursorBgColor := g.options.Theme.Cursor
+				if cursorBgColor == "" {
+					cursorBgColor = g.options.Theme.Foreground
+				}
 				if cursorBgColor == "" {
 					cursorBgColor = defaultCursorColor
 				}
@@ -1346,12 +1348,12 @@ func (g *SVGGenerator) generateState(index int, state *TerminalState) string {
 					_, _ = fmt.
 						// Use the cursor character from xterm.js (usually █)
 						Fprintf(&sb, `<tspan class="%s %s" style="fill:%s;">%s</tspan>`,
-							g.textClass, cursorClass, cursorBgColor, html.EscapeString(state.CursorChar))
+							g.textClass, cursorClass, html.EscapeString(cursorBgColor), html.EscapeString(state.CursorChar))
 				} else {
 					_, _ = fmt.
 						// Fallback to block character
 						Fprintf(&sb, `<tspan class="%s %s" style="fill:%s;">█</tspan>`,
-							g.textClass, cursorClass, cursorBgColor)
+							g.textClass, cursorClass, html.EscapeString(cursorBgColor))
 				}
 
 				// Render text after cursor

@@ -984,7 +984,7 @@ This fork adds several command-line options to enhance VHS functionality:
 ### Output Control
 
 ```sh
-# Disable SVG optimization for smaller output files (enabled by default)
+# Disable SVG minification and short class names (optimization is enabled by default)
 vhs demo.tape --no-svg-opt
 
 # Specify multiple output formats
