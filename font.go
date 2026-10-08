@@ -18,8 +18,11 @@ import (
 
 const (
 	// Font family constants.
-	monospaceFont = "monospace"
-	
+	monospaceFont   = "monospace"
+	uiMonospaceFont = "ui-monospace"
+	dejavuMonoFont  = "DejaVu Sans Mono"
+	menloFont       = "Menlo"
+
 	// Font positioning constants.
 	fontAscentRatio  = 0.8 // Font ascent is typically 80% of font size
 	fontPaddingRatio = 0.2 // Top padding is 20% of font size
@@ -152,7 +155,6 @@ func drawAntialiasedText(dst draw.Image, face font.Face, text string, x, y int, 
 	xdraw.BiLinear.Scale(dst, dstRect, tmp, tmp.Bounds(), xdraw.Over, nil)
 }
 
-
 // getTextYPositionForFont calculates the Y position for centered text with a specific font.
 func getTextYPositionForFont(barHeight int, face font.Face, fontSize int) int {
 	// Get font metrics
@@ -235,7 +237,7 @@ func (fl *FontLoader) loadFontFromFamily(fontFamily string, fontSize float64) (f
 		fontName = strings.TrimSpace(fontName)
 
 		// Skip generic font families
-		if fontName == monospaceFont || fontName == "ui-monospace" {
+		if fontName == monospaceFont || fontName == uiMonospaceFont {
 			continue
 		}
 
@@ -273,7 +275,7 @@ func (fl *FontLoader) getFontPaths(fontName string) []string {
 	var paths []string
 
 	// Common font directories on different platforms
-	var fontDirs []string
+	fontDirs := make([]string, 0, 9)
 
 	// macOS font directories
 	fontDirs = append(fontDirs,
@@ -304,15 +306,15 @@ func (fl *FontLoader) getFontPaths(fontName string) []string {
 
 	// Special cases for known fonts
 	fontFileMap := map[string][]string{
-		"JetBrains Mono":   {"JetBrainsMono-Regular.ttf", "JetBrainsMono.ttf"},
-		"DejaVu Sans Mono": {"DejaVuSansMono.ttf", "DejaVu Sans Mono.ttf"},
-		"Menlo":            {"Menlo.ttc", "Menlo-Regular.ttf"},
-		"Monaco":           {"Monaco.ttf"},
-		"Courier":          {"Courier.ttc", "Courier New.ttf"},
-		"Consolas":         {"consola.ttf", "Consolas.ttf"},
-		"Inconsolata":      {"Inconsolata-Regular.ttf", "Inconsolata.ttf"},
-		"Roboto Mono":      {"RobotoMono-Regular.ttf", "Roboto Mono.ttf"},
-		"Hack":             {"Hack-Regular.ttf", "Hack.ttf"},
+		"JetBrains Mono": {"JetBrainsMono-Regular.ttf", "JetBrainsMono.ttf"},
+		dejavuMonoFont:   {"DejaVuSansMono.ttf", "DejaVu Sans Mono.ttf"},
+		menloFont:        {"Menlo.ttc", "Menlo-Regular.ttf"},
+		"Monaco":         {"Monaco.ttf"},
+		"Courier":        {"Courier.ttc", "Courier New.ttf"},
+		"Consolas":       {"consola.ttf", "Consolas.ttf"},
+		"Inconsolata":    {"Inconsolata-Regular.ttf", "Inconsolata.ttf"},
+		"Roboto Mono":    {"RobotoMono-Regular.ttf", "Roboto Mono.ttf"},
+		"Hack":           {"Hack-Regular.ttf", "Hack.ttf"},
 	}
 
 	// Check special cases first
@@ -392,7 +394,7 @@ func (fl *FontLoader) loadFontFromFile(path string, fontSize float64) (font.Face
 // and falls back to the basic built-in font if none are found.
 func (fl *FontLoader) GetFallbackFont(fontSize float64) font.Face {
 	// Try to load a common monospace font
-	commonFonts := []string{"Monaco", "Menlo", "Courier", "DejaVu Sans Mono"}
+	commonFonts := []string{"Monaco", menloFont, "Courier", dejavuMonoFont}
 
 	for _, fontName := range commonFonts {
 		face, err := fl.loadSingleFont(fontName, fontSize)

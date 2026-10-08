@@ -2,6 +2,8 @@
 Output examples/welcome.gif
 Output examples/frames/
 
+Require gum
+
 # Set up a 1200x600 frame with 46px font size.
 Set FontSize 46
 Set Height 600
@@ -41,7 +43,7 @@ Sleep 0.5s
 Ctrl+E
 Sleep 0.5s
 
-Type " -s line -- sleep 2.5"
+Type " spin -s line -- sleep 2.5"
 Sleep 0.5s
 Enter
 

@@ -1,6 +1,9 @@
 Output examples/meta.webm
 Output examples/meta.mp4
 
+Require vhs
+Require gum
+
 Set Width 1920
 Set Height 1080
 Set FontSize 32

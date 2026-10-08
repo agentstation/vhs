@@ -40,6 +40,8 @@ type SVGFrame struct {
 	CharWidth  float64
 	CharHeight float64
 	CursorChar string // The cursor character (e.g., '█' for block)
+	TermCols   int    // Number of terminal columns from xterm.js
+	TermRows   int    // Number of terminal rows from xterm.js
 }
 
 // CharStyle represents the style of a character.
@@ -67,8 +69,10 @@ type SVGConfig struct {
 	LoopOffset    float64
 	OptimizeSize  bool // Enable size optimizations for smaller output
 	Debug         bool // Enable debug logging
-	FontData      string // Base64-encoded font data for @font-face embedding
-	FontMIME      string // MIME type for the embedded font (e.g. "font/truetype", "font/woff2")
+	FontData      string
+	FontMIME      string
+	FontFormat    string
+	TitleFont     svgFont
 }
 
 // TerminalState represents a unique terminal state for deduplication.
@@ -105,16 +109,16 @@ type FramePattern struct {
 	EndFrame   int
 	StartTime  float64
 	EndTime    float64
-	
+
 	// For typing patterns
 	Line     int
 	StartCol int
 	Text     string
-	
+
 	// For backspace patterns
 	DeletedText  string // Text that was deleted
 	DeletedCount int    // Number of characters deleted
-	
+
 	// Store the initial and final states
 	InitialState TerminalState
 	FinalState   TerminalState
@@ -142,14 +146,25 @@ type SVGGenerator struct {
 
 // NewSVGGenerator creates a new SVG generator.
 func NewSVGGenerator(opts SVGConfig) *SVGGenerator {
+	if opts.FontData != "" && strings.Contains(opts.FontFamily, ",") {
+		opts.FontFamily = captureFontFamily
+		if opts.Style != nil {
+			style := *opts.Style
+			style.FontFamily = captureFontFamily
+			opts.Style = &style
+		}
+	}
 	// Get character dimensions from the first frame if available
 	charWidth := float64(opts.FontSize) * 0.55 // fallback
 	charHeight := float64(opts.FontSize) * 1.2 // fallback
 
-	if len(opts.Frames) > 0 && opts.Frames[0].CharWidth > 0 {
-		// Use actual dimensions from xterm.js
-		charWidth = opts.Frames[0].CharWidth
-		charHeight = opts.Frames[0].CharHeight
+	if len(opts.Frames) > 0 {
+		if validSVGCellSize(opts.Frames[0].CharWidth) {
+			charWidth = opts.Frames[0].CharWidth
+		}
+		if validSVGCellSize(opts.Frames[0].CharHeight) {
+			charHeight = opts.Frames[0].CharHeight
+		}
 	}
 
 	// Get style for calculating frame spacing
@@ -186,6 +201,14 @@ func NewSVGGenerator(opts SVGConfig) *SVGGenerator {
 	}
 }
 
+// framePercentage places each state at its capture time.
+func (g *SVGGenerator) framePercentage(index int) float64 {
+	if index == 0 || g.options.Duration <= 0 {
+		return 0
+	}
+	return min(100, max(0, g.options.Frames[index].Timestamp/g.options.Duration*100))
+}
+
 // Generate creates the complete SVG animation.
 func (g *SVGGenerator) Generate() string {
 	if g.options.Debug {
@@ -198,6 +221,10 @@ func (g *SVGGenerator) Generate() string {
 		style = DefaultStyleOptions()
 	}
 
+	localStyle := *style
+	style = &localStyle
+	g.options.Style = style
+
 	// Process frames to extract unique states
 	g.processFrames()
 
@@ -206,37 +233,6 @@ func (g *SVGGenerator) Generate() string {
 	if g.fontSize <= 0 {
 		g.fontSize = 20
 	}
-
-	var sb strings.Builder
-
-	// Calculate total dimensions including margins
-	totalWidth := style.Width
-	totalHeight := style.Height
-	if style.Margin > 0 {
-		totalWidth += style.Margin * 2
-		totalHeight += style.Margin * 2
-	}
-
-	// SVG root element
-	sb.WriteString(fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">`,
-		totalWidth, totalHeight))
-	g.writeNewline(&sb)
-
-	// Add margin group if needed
-	if style.Margin > 0 {
-		marginColor := style.MarginFill
-		if marginColor == "" {
-			marginColor = defaultMarginColor
-		}
-		sb.WriteString(fmt.Sprintf(`<rect width="%d" height="%d" fill="%s"/>`,
-			totalWidth, totalHeight, marginColor))
-		g.writeNewline(&sb)
-		sb.WriteString(fmt.Sprintf(`<g transform="translate(%d,%d)">`, style.Margin, style.Margin))
-		g.writeNewline(&sb)
-	}
-
-	// Terminal window
-	sb.WriteString(g.generateTerminalWindow())
 
 	// Calculate inner terminal area
 	barHeight := 0
@@ -250,21 +246,54 @@ func (g *SVGGenerator) Generate() string {
 	innerWidth := style.Width - (padding * 2)
 	innerHeight := style.Height - barHeight - (padding * 2)
 
-	// Inner terminal SVG with viewBox for animation
-	// Calculate actual terminal content height
-	maxLines := 0
-	for _, state := range g.states {
-		if len(state.Lines) > maxLines {
-			maxLines = len(state.Lines)
-		}
+	if len(g.options.Frames) > 0 {
+		frame := g.options.Frames[0]
+		innerWidth = svgGridDimension(frame.TermCols, g.charWidth, innerWidth)
+		innerHeight = svgGridDimension(frame.TermRows, g.charHeight, innerHeight)
 	}
-	// viewBox width should match frame spacing (one frame width), height matches terminal
-	viewBoxWidth := g.frameSpacing
-	viewBoxHeight := float64(innerHeight)
 
+	// Update frame spacing and outer dimensions to match snapped inner area
+	g.frameSpacing = float64(innerWidth)
+	style.Width = innerWidth + (padding * 2)
+	style.Height = innerHeight + barHeight + (padding * 2)
+	g.options.Width = style.Width
+	g.options.Height = style.Height
+
+	totalWidth := style.Width
+	totalHeight := style.Height
+	if style.Margin > 0 {
+		totalWidth += style.Margin * 2
+		totalHeight += style.Margin * 2
+	}
+	var sb strings.Builder
+
+	// SVG root element
+	_, _ = fmt.Fprintf(&sb, `<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">`,
+		totalWidth, totalHeight)
+	g.writeNewline(&sb)
+
+	// Add margin group if needed
+	if style.Margin > 0 {
+		marginColor := style.MarginFill
+		if marginColor == "" {
+			marginColor = defaultMarginColor
+		}
+		_, _ = fmt.Fprintf(&sb, `<rect width="%d" height="%d" fill="%s"/>`,
+			totalWidth, totalHeight, marginColor)
+		g.writeNewline(&sb)
+		_, _ = fmt.Fprintf(&sb, `<g transform="translate(%d,%d)">`, style.Margin, style.Margin)
+		g.writeNewline(&sb)
+	}
+
+	// Terminal window
+	sb.WriteString(g.generateTerminalWindow())
+
+	// viewBox width should match frame spacing (one frame width), height matches terminal
+	viewBoxWidth := float64(innerWidth)
+	viewBoxHeight := float64(innerHeight)
 	// Create inner SVG with viewBox that shows one frame at a time
-	sb.WriteString(fmt.Sprintf(`<svg x="%d" y="%d" width="%d" height="%d" viewBox="0 0 %s %s">`,
-		innerX, innerY, innerWidth, innerHeight, formatCoord(viewBoxWidth), formatCoord(viewBoxHeight)))
+	_, _ = fmt.Fprintf(&sb, `<svg x="%d" y="%d" width="%d" height="%d" viewBox="0 0 %s %s">`,
+		innerX, innerY, innerWidth, innerHeight, formatCoord(viewBoxWidth), formatCoord(viewBoxHeight))
 	g.writeNewline(&sb)
 
 	// Add terminal background
@@ -272,8 +301,8 @@ func (g *SVGGenerator) Generate() string {
 	if terminalBgColor == "" {
 		terminalBgColor = defaultMarginColor
 	}
-	sb.WriteString(fmt.Sprintf(`<rect width="%s" height="%s" fill="%s"/>`,
-		formatCoord(viewBoxWidth), formatCoord(viewBoxHeight), terminalBgColor))
+	_, _ = fmt.Fprintf(&sb, `<rect width="%s" height="%s" fill="%s"/>`,
+		formatCoord(viewBoxWidth), formatCoord(viewBoxHeight), terminalBgColor)
 	g.writeNewline(&sb)
 
 	// Add styles including CSS animation
@@ -330,7 +359,7 @@ func (g *SVGGenerator) Generate() string {
 func (g *SVGGenerator) processFrames() {
 	// First, detect patterns for optimization
 	g.detectPatterns()
-	
+
 	// First pass: collect all unique states and track when they change
 	lastStateIndex := -1
 	lastCursorIdleTime := 0.0
@@ -408,7 +437,7 @@ func (g *SVGGenerator) processFrames() {
 			// Reuse existing state - only add to timeline if state changed
 			if idx != lastStateIndex {
 				g.timeline = append(g.timeline, KeyframeStop{
-					Percentage: float64(i) / float64(len(g.options.Frames)-1) * 100,
+					Percentage: g.framePercentage(i),
 					StateIndex: idx,
 				})
 				lastStateIndex = idx
@@ -435,7 +464,7 @@ func (g *SVGGenerator) processFrames() {
 			}
 
 			g.timeline = append(g.timeline, KeyframeStop{
-				Percentage: float64(i) / float64(len(g.options.Frames)-1) * 100,
+				Percentage: g.framePercentage(i),
 				StateIndex: idx,
 			})
 			lastStateIndex = idx
@@ -530,12 +559,12 @@ func (g *SVGGenerator) hashState(state *TerminalState) string {
 // detectPatterns analyzes frames to find typing and other patterns.
 func (g *SVGGenerator) detectPatterns() {
 	g.patterns = []FramePattern{}
-	
+
 	if len(g.options.Frames) < 2 {
 		// Not enough frames to detect patterns
 		return
 	}
-	
+
 	i := 0
 	for i < len(g.options.Frames) {
 		// Try to detect typing pattern
@@ -544,14 +573,14 @@ func (g *SVGGenerator) detectPatterns() {
 			i += consumed
 			continue
 		}
-		
+
 		// Try to detect backspace pattern
 		if pattern, consumed := g.detectBackspacePattern(i); pattern != nil {
 			g.patterns = append(g.patterns, *pattern)
 			i += consumed
 			continue
 		}
-		
+
 		// If no pattern detected, treat as static frame
 		frame := g.options.Frames[i]
 		g.patterns = append(g.patterns, FramePattern{
@@ -570,7 +599,7 @@ func (g *SVGGenerator) detectPatterns() {
 		})
 		i++
 	}
-	
+
 	if g.options.Debug {
 		typingPatterns := 0
 		typingFrames := 0
@@ -604,37 +633,37 @@ func (g *SVGGenerator) detectTypingPattern(start int) (*FramePattern, int) {
 	if start >= len(g.options.Frames)-1 {
 		return nil, 0
 	}
-	
+
 	firstFrame := g.options.Frames[start]
 	line := firstFrame.CursorY
 	startCol := firstFrame.CursorX
-	
+
 	// Track the typing sequence
 	end := start + 1
 	for end < len(g.options.Frames) {
 		prev := g.options.Frames[end-1]
 		curr := g.options.Frames[end]
-		
+
 		// Check if still typing on the same line
 		if curr.CursorY != line {
 			break
 		}
-		
+
 		// Cursor should move forward (or stay for multi-byte chars)
 		if curr.CursorX < prev.CursorX-1 { // Allow small backward movement for corrections
 			break
 		}
-		
+
 		// Check that only the cursor line changed
 		if !g.isOnlyLineChanged(prev, curr, line) {
 			break
 		}
-		
+
 		// Line should grow (characters added)
 		if line < len(prev.Lines) && line < len(curr.Lines) {
 			prevLine := prev.Lines[line]
 			currLine := curr.Lines[line]
-			
+
 			// Check if current line starts with previous line (typing appends)
 			if !strings.HasPrefix(currLine, prevLine) {
 				// If text got shorter, it's likely a backspace - break the pattern
@@ -644,7 +673,7 @@ func (g *SVGGenerator) detectTypingPattern(start int) (*FramePattern, int) {
 				// If text changed but didn't grow from the previous, break
 				break
 			}
-			
+
 			// Check typing speed is reasonable (1-15 chars per frame is typical)
 			charsChanged := abs(len(currLine) - len(prevLine))
 			if charsChanged > 15 {
@@ -653,24 +682,24 @@ func (g *SVGGenerator) detectTypingPattern(start int) (*FramePattern, int) {
 		} else {
 			break
 		}
-		
+
 		end++
 	}
-	
+
 	// Need at least 3 frames to consider it a typing pattern
 	framesInPattern := end - start
 	if framesInPattern < 3 {
 		return nil, 0
 	}
-	
+
 	// Extract the typed text
 	lastFrame := g.options.Frames[end-1]
 	var typedText string
-	
+
 	if line < len(firstFrame.Lines) && line < len(lastFrame.Lines) {
 		startLine := firstFrame.Lines[line]
 		endLine := lastFrame.Lines[line]
-		
+
 		// Find the common prefix (unchanged part)
 		commonPrefix := 0
 		for i := 0; i < len(startLine) && i < len(endLine); i++ {
@@ -679,7 +708,7 @@ func (g *SVGGenerator) detectTypingPattern(start int) (*FramePattern, int) {
 			}
 			commonPrefix = i
 		}
-		
+
 		// The typed text is what was added after the common prefix
 		if len(endLine) > len(startLine) {
 			typedText = endLine[len(startLine):]
@@ -688,12 +717,12 @@ func (g *SVGGenerator) detectTypingPattern(start int) (*FramePattern, int) {
 			typedText = endLine[commonPrefix:]
 		}
 	}
-	
+
 	// Only create pattern if we actually typed something substantial
 	if len(typedText) < 2 {
 		return nil, 0
 	}
-	
+
 	// Create initial and final states
 	initialState := TerminalState{
 		Lines:      firstFrame.Lines,
@@ -702,7 +731,7 @@ func (g *SVGGenerator) detectTypingPattern(start int) (*FramePattern, int) {
 		CursorY:    firstFrame.CursorY,
 		CursorChar: firstFrame.CursorChar,
 	}
-	
+
 	finalState := TerminalState{
 		Lines:      lastFrame.Lines,
 		LineColors: lastFrame.LineColors,
@@ -710,7 +739,7 @@ func (g *SVGGenerator) detectTypingPattern(start int) (*FramePattern, int) {
 		CursorY:    lastFrame.CursorY,
 		CursorChar: lastFrame.CursorChar,
 	}
-	
+
 	pattern := &FramePattern{
 		Type:         PatternTyping,
 		StartFrame:   start,
@@ -723,12 +752,12 @@ func (g *SVGGenerator) detectTypingPattern(start int) (*FramePattern, int) {
 		InitialState: initialState,
 		FinalState:   finalState,
 	}
-	
+
 	if g.options.Debug {
 		log.Printf("Detected typing pattern: frames %d-%d, line %d, text: %q (saved %d frames)",
 			start, end-1, line, typedText, framesInPattern-2)
 	}
-	
+
 	return pattern, framesInPattern
 }
 
@@ -737,48 +766,48 @@ func (g *SVGGenerator) detectBackspacePattern(start int) (*FramePattern, int) {
 	if start >= len(g.options.Frames)-1 {
 		return nil, 0
 	}
-	
+
 	firstFrame := g.options.Frames[start]
 	line := firstFrame.CursorY
-	
+
 	// Track the backspace sequence
 	end := start + 1
 	totalDeleted := 0
-	
+
 	for end < len(g.options.Frames) {
 		prev := g.options.Frames[end-1]
 		curr := g.options.Frames[end]
-		
+
 		// Check if still on the same line
 		if curr.CursorY != line {
 			break
 		}
-		
+
 		// Check that only the cursor line changed
 		if !g.isOnlyLineChanged(prev, curr, line) {
 			break
 		}
-		
+
 		// Check if text is getting shorter (backspace pattern)
 		if line < len(prev.Lines) && line < len(curr.Lines) {
 			prevLine := prev.Lines[line]
 			currLine := curr.Lines[line]
-			
+
 			// For backspace, current line should be shorter
 			if len(currLine) >= len(prevLine) {
 				break
 			}
-			
+
 			// Check if it's a prefix (deleting from end)
 			if !strings.HasPrefix(prevLine, currLine) {
 				// Could be deletion in middle, but for now we'll break
 				break
 			}
-			
+
 			// Track how many characters were deleted
 			deleted := len(prevLine) - len(currLine)
 			totalDeleted += deleted
-			
+
 			// Don't group huge deletions (likely line clear, not backspace)
 			if deleted > 10 {
 				break
@@ -786,34 +815,34 @@ func (g *SVGGenerator) detectBackspacePattern(start int) (*FramePattern, int) {
 		} else {
 			break
 		}
-		
+
 		end++
 	}
-	
+
 	// Need at least 2 frames to consider it a backspace pattern
 	framesInPattern := end - start
 	if framesInPattern < 2 {
 		return nil, 0
 	}
-	
+
 	// Need to have deleted at least 2 characters to be worth optimizing
 	if totalDeleted < 2 {
 		return nil, 0
 	}
-	
+
 	// Extract what was deleted
 	lastFrame := g.options.Frames[end-1]
 	var deletedText string
-	
+
 	if line < len(firstFrame.Lines) && line < len(lastFrame.Lines) {
 		startLine := firstFrame.Lines[line]
 		endLine := lastFrame.Lines[line]
-		
+
 		if strings.HasPrefix(startLine, endLine) {
 			deletedText = startLine[len(endLine):]
 		}
 	}
-	
+
 	// Create states
 	initialState := TerminalState{
 		Lines:      firstFrame.Lines,
@@ -822,7 +851,7 @@ func (g *SVGGenerator) detectBackspacePattern(start int) (*FramePattern, int) {
 		CursorY:    firstFrame.CursorY,
 		CursorChar: firstFrame.CursorChar,
 	}
-	
+
 	finalState := TerminalState{
 		Lines:      lastFrame.Lines,
 		LineColors: lastFrame.LineColors,
@@ -830,7 +859,7 @@ func (g *SVGGenerator) detectBackspacePattern(start int) (*FramePattern, int) {
 		CursorY:    lastFrame.CursorY,
 		CursorChar: lastFrame.CursorChar,
 	}
-	
+
 	pattern := &FramePattern{
 		Type:         PatternBackspace,
 		StartFrame:   start,
@@ -843,12 +872,12 @@ func (g *SVGGenerator) detectBackspacePattern(start int) (*FramePattern, int) {
 		InitialState: initialState,
 		FinalState:   finalState,
 	}
-	
+
 	if g.options.Debug {
 		log.Printf("Detected backspace pattern: frames %d-%d, line %d, deleted: %q (saved %d frames)",
 			start, end-1, line, deletedText, framesInPattern-1)
 	}
-	
+
 	return pattern, framesInPattern
 }
 
@@ -858,13 +887,13 @@ func (g *SVGGenerator) isOnlyLineChanged(prev, curr SVGFrame, targetLine int) bo
 	if abs(len(curr.Lines)-len(prev.Lines)) > 1 {
 		return false
 	}
-	
+
 	// Check each line
 	maxLines := len(prev.Lines)
 	if len(curr.Lines) < maxLines {
 		maxLines = len(curr.Lines)
 	}
-	
+
 	for i := 0; i < maxLines; i++ {
 		if i != targetLine {
 			// Other lines should remain unchanged
@@ -873,7 +902,7 @@ func (g *SVGGenerator) isOnlyLineChanged(prev, curr SVGFrame, targetLine int) bo
 			}
 		}
 	}
-	
+
 	return true
 }
 
@@ -890,7 +919,7 @@ func (g *SVGGenerator) generateTypingCSS(sb *strings.Builder, index int, pattern
 	// Calculate the width of the typed text
 	textWidth := float64(len(pattern.Text)) * g.charWidth
 	duration := pattern.EndTime - pattern.StartTime
-	
+
 	// Generate the keyframe animation
 	fmt.Fprintf(sb, "@keyframes typing_%d {", index)
 	g.writeNewline(sb)
@@ -900,7 +929,7 @@ func (g *SVGGenerator) generateTypingCSS(sb *strings.Builder, index int, pattern
 	g.writeNewline(sb)
 	sb.WriteString("}")
 	g.writeNewline(sb)
-	
+
 	// Generate the class for this typing animation
 	fmt.Fprintf(sb, ".typing_%d {", index)
 	g.writeNewline(sb)
@@ -925,7 +954,7 @@ func (g *SVGGenerator) generateBackspaceCSS(sb *strings.Builder, index int, patt
 	// Calculate the width of the deleted text
 	startWidth := float64(len(pattern.DeletedText)) * g.charWidth
 	duration := pattern.EndTime - pattern.StartTime
-	
+
 	// Generate the keyframe animation (reverse of typing)
 	fmt.Fprintf(sb, "@keyframes backspace_%d {", index)
 	g.writeNewline(sb)
@@ -935,7 +964,7 @@ func (g *SVGGenerator) generateBackspaceCSS(sb *strings.Builder, index int, patt
 	g.writeNewline(sb)
 	sb.WriteString("}")
 	g.writeNewline(sb)
-	
+
 	// Generate the class for this backspace animation
 	fmt.Fprintf(sb, ".backspace_%d {", index)
 	g.writeNewline(sb)
@@ -962,38 +991,16 @@ func (g *SVGGenerator) generateStyles() string {
 	sb.WriteString("<style>")
 	g.writeNewline(&sb)
 
-	// Embed @font-face if font data is provided
 	if g.options.FontData != "" {
-		fontFamily := g.options.FontFamily
-		if fontFamily == "" {
-			fontFamily = svgDefaultFontFamily
+		family := g.options.FontFamily
+		if family == "" {
+			family = svgDefaultFontFamily
 		}
-		mime := g.options.FontMIME
-		if mime == "" {
-			mime = "font/truetype"
-		}
-		// Determine format hint from MIME type
-		formatHint := "truetype"
-		if strings.Contains(mime, "woff2") {
-			formatHint = "woff2"
-		} else if strings.Contains(mime, "woff") {
-			formatHint = "woff"
-		} else if strings.Contains(mime, "opentype") {
-			formatHint = "opentype"
-		}
-		safeFontFamily := strings.NewReplacer(
-			`\`, `\\`,
-			`"`, `\"`,
-			"\n", `\A `,
-			"\r", "",
-			`}`, `\}`,
-			`{`, `\{`,
-			`;`, `\;`,
-			`<`, `\3C `,
-			`>`, `\3E `,
-		).Replace(fontFamily)
-		sb.WriteString(fmt.Sprintf(`@font-face { font-family: "%s"; src: url("data:%s;base64,%s") format("%s"); }`,
-			safeFontFamily, mime, g.options.FontData, formatHint))
+		sb.WriteString((svgFont{data: g.options.FontData, mime: g.options.FontMIME, format: g.options.FontFormat}).cssFace(family))
+		g.writeNewline(&sb)
+	}
+	if g.options.TitleFont.data != "" {
+		sb.WriteString(g.options.TitleFont.cssFace(titleFontFamily))
 		g.writeNewline(&sb)
 	}
 
@@ -1015,10 +1022,17 @@ func (g *SVGGenerator) generateStyles() string {
 
 	// Build optimized keyframes from timeline
 	keyframeCount := len(g.timeline)
+	// Sparse state changes can still have closely spaced capture timestamps.
+	for i := 1; i < len(g.timeline); i++ {
+		gap := g.timeline[i].Percentage - g.timeline[i-1].Percentage
+		if gap > 0 {
+			keyframeCount = max(keyframeCount, int(100/gap)+1)
+		}
+	}
 	for _, stop := range g.timeline {
 		offset := -float64(stop.StateIndex) * g.frameSpacing
-		sb.WriteString(fmt.Sprintf("  %s%% { transform: translateX(%spx); }",
-			formatPercentage(stop.Percentage, keyframeCount), formatCoord(offset)))
+		_, _ = fmt.Fprintf(&sb, "  %s%% { transform: translateX(%spx); }",
+			formatPercentage(stop.Percentage, keyframeCount), formatCoord(offset))
 		g.writeNewline(&sb)
 	}
 
@@ -1035,21 +1049,10 @@ func (g *SVGGenerator) generateStyles() string {
 		animationDuration = g.options.Duration / g.options.PlaybackSpeed
 	}
 
-	// Calculate animation delay based on LoopOffset
-	animationDelay := 0.0
-	if g.options.LoopOffset > 0 {
-		// LoopOffset can be a percentage (0-100) or frame number
-		if g.options.LoopOffset <= 1.0 {
-			// Treat as percentage
-			animationDelay = -animationDuration * g.options.LoopOffset
-		} else {
-			// Treat as frame number
-			animationDelay = -(g.options.LoopOffset / float64(len(g.options.Frames))) * animationDuration
-		}
-	}
-
+	// LoopOffset uses the same percentage contract as raster output.
+	animationDelay := -animationDuration * g.options.LoopOffset / 100
 	// Use step-end timing to ensure frames change instantly
-	sb.WriteString(fmt.Sprintf("  animation: slide %ss step-end %ss infinite;", formatDuration(animationDuration), formatDuration(animationDelay)))
+	_, _ = fmt.Fprintf(&sb, "  animation: slide %ss step-end %ss infinite;", formatDuration(animationDuration), formatDuration(animationDelay))
 	g.writeNewline(&sb)
 	sb.WriteString("}")
 	g.writeNewline(&sb)
@@ -1080,11 +1083,11 @@ func (g *SVGGenerator) generateStyles() string {
 		foregroundColor = defaultForegroundColor
 	}
 	// Use a simpler font stack for better compatibility
-	textStyle := fmt.Sprintf("fill: %s; font-family: %s, monospace; font-size: %spx;",
-		foregroundColor, fontFamily, formatCoord(g.fontSize))
+	textStyle := fmt.Sprintf("fill: %s; font-family: %s; font-size: %spx;",
+		foregroundColor, buildSVGFontFamily(fontFamily), formatCoord(g.fontSize))
 	// Don't apply letter-spacing in SVG as it causes cursor misalignment
 	// The character positions from xterm.js already account for the terminal's letter spacing
-	sb.WriteString(fmt.Sprintf(".%s { %s }", textClass, textStyle))
+	_, _ = fmt.Fprintf(&sb, ".%s { %s }", textClass, textStyle)
 	g.writeNewline(&sb)
 
 	// Add ANSI color classes - use a map to avoid duplicates
@@ -1112,32 +1115,31 @@ func (g *SVGGenerator) generateStyles() string {
 			"w": theme.White,
 		}
 		for name, color := range shortColorClasses {
-			sb.WriteString(fmt.Sprintf(".%s { fill: %s; }", name, color))
+			_, _ = fmt.Fprintf(&sb, ".%s { fill: %s; }", name, color)
 			g.writeNewline(&sb)
 		}
 		// Add prompt color class if we detect it's used frequently
 		if theme.BrightBlue != "" {
-			sb.WriteString(fmt.Sprintf(".p { fill: %s; }", theme.BrightBlue)) // prompt color
+			_, _ = fmt.Fprintf(&sb, ".p { fill: %s; }", theme.BrightBlue) // prompt color
 			g.writeNewline(&sb)
 		}
 	} else {
 		for name, color := range colorClasses {
-			sb.WriteString(fmt.Sprintf(".%s { fill: %s; }", name, color))
+			_, _ = fmt.Fprintf(&sb, ".%s { fill: %s; }", name, color)
 			g.writeNewline(&sb)
 		}
 	}
-
 	// Cursor styles - for inline cursor with background
 	// Note: SVG doesn't support background property on tspan, we'll need to use a different approach
 	// We'll render a rect behind the cursor character
 	// Active cursor is always visible
-	sb.WriteString(fmt.Sprintf(".%s { }", cursorActiveClass))
+	_, _ = fmt.Fprintf(&sb, ".%s { }", cursorActiveClass)
 	g.writeNewline(&sb)
 	// Idle cursor blinks
 	if g.options.CursorBlink {
 		sb.WriteString("@keyframes blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }")
 		g.writeNewline(&sb)
-		sb.WriteString(fmt.Sprintf(".%s { animation: blink 1s infinite; }", cursorIdleClass))
+		_, _ = fmt.Fprintf(&sb, ".%s { animation: blink 1s infinite; }", cursorIdleClass)
 		g.writeNewline(&sb)
 	}
 
@@ -1153,8 +1155,7 @@ func (g *SVGGenerator) generateState(index int, state *TerminalState) string {
 
 	// Position this state in the animation sequence
 	xOffset := float64(index) * g.frameSpacing
-
-	sb.WriteString(fmt.Sprintf(`<g transform="translate(%s,0)">`, formatCoord(xOffset)))
+	_, _ = fmt.Fprintf(&sb, `<g transform="translate(%s,0)">`, formatCoord(xOffset))
 	g.writeNewline(&sb)
 
 	// Debug specific state with background colors
@@ -1252,8 +1253,8 @@ func (g *SVGGenerator) generateState(index int, state *TerminalState) string {
 							log.Printf("Rendering background rect at (%d,%d) with color %s", x, y, style.BgColor)
 						}
 						charX := float64(x) * g.charWidth
-						sb.WriteString(fmt.Sprintf(`<rect x="%s" y="%s" width="%s" height="%s" fill="%s" shape-rendering="crispEdges"/>`,
-							formatCoord(charX), formatCoord(float64(y)*g.charHeight*lineHeight), formatCoord(g.charWidth), formatCoord(g.charHeight), style.BgColor))
+						_, _ = fmt.Fprintf(&sb, `<rect x="%s" y="%s" width="%s" height="%s" fill="%s" shape-rendering="crispEdges"/>`,
+							formatCoord(charX), formatCoord(float64(y)*g.charHeight*lineHeight), formatCoord(g.charWidth), formatCoord(g.charHeight), style.BgColor)
 						g.writeNewline(&sb)
 					}
 				}
@@ -1293,10 +1294,11 @@ func (g *SVGGenerator) generateState(index int, state *TerminalState) string {
 				} else {
 					beforeCursor = string(runes)
 				}
+				_, _ = fmt.
 
-				// Render all text in a single text element with inline cursor
-				// Add xml:space="preserve" to preserve whitespace
-				sb.WriteString(fmt.Sprintf(`<text y="%s" xml:space="preserve">`, formatCoord(yPos)))
+					// Render all text in a single text element with inline cursor
+					// Add xml:space="preserve" to preserve whitespace
+					Fprintf(&sb, `<text y="%s" xml:space="preserve">`, formatCoord(yPos))
 
 				// Render text before cursor with proper styling
 				if beforeCursor != "" {
@@ -1324,13 +1326,15 @@ func (g *SVGGenerator) generateState(index int, state *TerminalState) string {
 				// Render cursor inline
 				// For a true inline solution, we'll render the cursor as a colored block character
 				if state.CursorChar != "" && state.CursorChar != " " {
-					// Use the cursor character from xterm.js (usually █)
-					sb.WriteString(fmt.Sprintf(`<tspan class="%s %s" style="fill:%s;">%s</tspan>`,
-						g.textClass, cursorClass, cursorBgColor, html.EscapeString(state.CursorChar)))
+					_, _ = fmt.
+						// Use the cursor character from xterm.js (usually █)
+						Fprintf(&sb, `<tspan class="%s %s" style="fill:%s;">%s</tspan>`,
+							g.textClass, cursorClass, cursorBgColor, html.EscapeString(state.CursorChar))
 				} else {
-					// Fallback to block character
-					sb.WriteString(fmt.Sprintf(`<tspan class="%s %s" style="fill:%s;">█</tspan>`,
-						g.textClass, cursorClass, cursorBgColor))
+					_, _ = fmt.
+						// Fallback to block character
+						Fprintf(&sb, `<tspan class="%s %s" style="fill:%s;">█</tspan>`,
+							g.textClass, cursorClass, cursorBgColor)
 				}
 
 				// Render text after cursor
@@ -1405,9 +1409,9 @@ func (g *SVGGenerator) generateState(index int, state *TerminalState) string {
 						}
 
 						if styleStr != "" {
-							sb.WriteString(fmt.Sprintf(`<tspan class="%s" style="%s">%s</tspan>`, classes, styleStr, html.EscapeString(segmentText)))
+							_, _ = fmt.Fprintf(&sb, `<tspan class="%s" style="%s">%s</tspan>`, classes, styleStr, html.EscapeString(segmentText))
 						} else {
-							sb.WriteString(fmt.Sprintf(`<tspan class="%s">%s</tspan>`, classes, html.EscapeString(segmentText)))
+							_, _ = fmt.Fprintf(&sb, `<tspan class="%s">%s</tspan>`, classes, html.EscapeString(segmentText))
 						}
 					}
 				}
@@ -1415,9 +1419,10 @@ func (g *SVGGenerator) generateState(index int, state *TerminalState) string {
 				sb.WriteString("</text>")
 				g.writeNewline(&sb)
 			} else {
-				// No cursor on this line, render normally
-				// Add xml:space="preserve" to preserve whitespace
-				sb.WriteString(fmt.Sprintf(`<text y="%s" xml:space="preserve">`, formatCoord(yPos)))
+				_, _ = fmt.
+					// No cursor on this line, render normally
+					// Add xml:space="preserve" to preserve whitespace
+					Fprintf(&sb, `<text y="%s" xml:space="preserve">`, formatCoord(yPos))
 				g.renderTextSegment(&sb, string(runes), y, 0, len(runes), hasColors, state.LineColors)
 				sb.WriteString("</text>")
 				g.writeNewline(&sb)
@@ -1590,32 +1595,32 @@ func formatPercentage(val float64, keyframeCount int) string {
 	if val == float64(int(val)) {
 		return fmt.Sprintf("%d", int(val))
 	}
-	
+
 	// Dynamically determine precision based on keyframe count
 	// This ensures we have enough precision to avoid collisions
 	// while keeping the output as compact as possible
 	var precision int
 	switch {
 	case keyframeCount < 100:
-		precision = 1  // Up to 100 unique values
+		precision = 1 // Up to 100 unique values
 	case keyframeCount < 1000:
-		precision = 2  // Up to 1,000 unique values
+		precision = 2 // Up to 1,000 unique values
 	case keyframeCount < 10000:
-		precision = 3  // Up to 10,000 unique values
+		precision = 3 // Up to 10,000 unique values
 	case keyframeCount < 100000:
-		precision = 4  // Up to 100,000 unique values
+		precision = 4 // Up to 100,000 unique values
 	default:
-		precision = 5  // Up to 1,000,000 unique values
+		precision = 5 // Up to 1,000,000 unique values
 	}
-	
+
 	// Format with calculated precision
 	formatStr := fmt.Sprintf("%%.%df", precision)
 	formatted := fmt.Sprintf(formatStr, val)
-	
+
 	// Remove trailing zeros but keep at least 1 decimal for consistency
 	formatted = strings.TrimRight(formatted, "0")
 	formatted = strings.TrimSuffix(formatted, ".")
-	
+
 	return formatted
 }
 
@@ -1662,9 +1667,8 @@ func (g *SVGGenerator) generateTerminalWindow() string {
 	if bgColor == "" {
 		bgColor = defaultBarColor
 	}
-
-	sb.WriteString(fmt.Sprintf(`<rect width="%d" height="%d" rx="%d" fill="%s"/>`,
-		g.options.Width, g.options.Height, borderRadius, bgColor))
+	_, _ = fmt.Fprintf(&sb, `<rect width="%d" height="%d" rx="%d" fill="%s"/>`,
+		g.options.Width, g.options.Height, borderRadius, bgColor)
 	g.writeNewline(&sb)
 
 	// Window bar if enabled
@@ -1698,11 +1702,10 @@ func (g *SVGGenerator) generateWindowBar() string {
 
 	sb.WriteString(`<g id="window-bar">`)
 	g.writeNewline(&sb)
-
 	// Bar background with rounded top corners
-	sb.WriteString(fmt.Sprintf(`<path d="M %d,0 L %d,0 Q %d,0 %d,%d L %d,%d L 0,%d L 0,%d Q 0,0 %d,0 Z" fill="%s"/>`,
+	_, _ = fmt.Fprintf(&sb, `<path d="M %d,0 L %d,0 Q %d,0 %d,%d L %d,%d L 0,%d L 0,%d Q 0,0 %d,0 Z" fill="%s"/>`,
 		borderRadius, g.options.Width-borderRadius, g.options.Width, g.options.Width, borderRadius,
-		g.options.Width, barSize, barSize, borderRadius, borderRadius, barColor))
+		g.options.Width, barSize, barSize, borderRadius, borderRadius, barColor)
 	g.writeNewline(&sb)
 
 	// Window controls based on style
@@ -1711,28 +1714,28 @@ func (g *SVGGenerator) generateWindowBar() string {
 		// Colorful circles on the left (macOS-style)
 		for i, color := range windowControlColors {
 			x := 20 + i*20
-			sb.WriteString(fmt.Sprintf(`<circle cx="%d" cy="%d" r="6" fill="%s"/>`, x, barSize/2, color))
+			_, _ = fmt.Fprintf(&sb, `<circle cx="%d" cy="%d" r="6" fill="%s"/>`, x, barSize/2, color)
 			g.writeNewline(&sb)
 		}
 	case "ColorfulRight":
 		// Colorful circles on the right
 		for i, color := range windowControlColors {
 			x := g.options.Width - 80 + i*20
-			sb.WriteString(fmt.Sprintf(`<circle cx="%d" cy="%d" r="6" fill="%s"/>`, x, barSize/2, color))
+			_, _ = fmt.Fprintf(&sb, `<circle cx="%d" cy="%d" r="6" fill="%s"/>`, x, barSize/2, color)
 			g.writeNewline(&sb)
 		}
 	case "Rings":
 		// Ring circles on the left
 		for i, color := range windowControlColors {
 			x := 20 + i*20
-			sb.WriteString(fmt.Sprintf(`<circle cx="%d" cy="%d" r="6" fill="none" stroke="%s" stroke-width="1"/>`, x, barSize/2, color))
+			_, _ = fmt.Fprintf(&sb, `<circle cx="%d" cy="%d" r="6" fill="none" stroke="%s" stroke-width="1"/>`, x, barSize/2, color)
 			g.writeNewline(&sb)
 		}
 	case "RingsRight":
 		// Ring circles on the right
 		for i, color := range windowControlColors {
 			x := g.options.Width - 80 + i*20
-			sb.WriteString(fmt.Sprintf(`<circle cx="%d" cy="%d" r="6" fill="none" stroke="%s" stroke-width="1"/>`, x, barSize/2, color))
+			_, _ = fmt.Fprintf(&sb, `<circle cx="%d" cy="%d" r="6" fill="none" stroke="%s" stroke-width="1"/>`, x, barSize/2, color)
 			g.writeNewline(&sb)
 		}
 	}
@@ -1741,6 +1744,9 @@ func (g *SVGGenerator) generateWindowBar() string {
 	if style.WindowBarTitle != "" {
 		// Get the appropriate font family with fallbacks
 		fontFamily := getWindowBarFontFamily(style, g.options.FontFamily)
+		if g.options.TitleFont.data != "" {
+			fontFamily = buildSVGFontFamily(titleFontFamily)
+		}
 		// Get the appropriate font size with fallback
 		fontSize := style.WindowBarFontSize
 		if fontSize == 0 {
@@ -1776,9 +1782,8 @@ func (g *SVGGenerator) generateWindowBar() string {
 		// The text will be centered but constrained to avoid overlapping with window controls
 		// Window controls occupy roughly 80px on each side
 		centerX := g.options.Width / 2
-
-		sb.WriteString(fmt.Sprintf(`<text x="%d" y="%d" text-anchor="middle" font-family="%s" font-size="%d" fill="#cccccc">`,
-			centerX, yPos, fontFamily, fontSize))
+		_, _ = fmt.Fprintf(&sb, `<text x="%d" y="%d" text-anchor="middle" font-family="%s" font-size="%d" fill="#cccccc">`,
+			centerX, yPos, html.EscapeString(fontFamily), fontSize)
 		sb.WriteString(html.EscapeString(style.WindowBarTitle))
 		sb.WriteString(`</text>`)
 		g.writeNewline(&sb)
@@ -1791,7 +1796,7 @@ func (g *SVGGenerator) generateWindowBar() string {
 }
 
 // CaptureSVGFrame captures the current terminal state and returns an SVGFrame.
-func CaptureSVGFrame(page *rod.Page, counter int, framerate int) (*SVGFrame, error) {
+func CaptureSVGFrame(page *rod.Page, timestamp float64) (*SVGFrame, error) {
 	// Get cursor position and exact character positions from xterm.js
 	termInfo, err := page.Eval(`() => {
 		const term = window.term;
@@ -1970,7 +1975,9 @@ func CaptureSVGFrame(page *rod.Page, counter int, framerate int) (*SVGFrame, err
 			charWidth: charWidth,
 			charHeight: charHeight,
 			lineColors: lineColors,
-			cursorChar: cursorChar
+			cursorChar: cursorChar,
+			termCols: cols,
+			termRows: term.rows
 		};
 	}`)
 	if err != nil {
@@ -2016,6 +2023,8 @@ func CaptureSVGFrame(page *rod.Page, counter int, framerate int) (*SVGFrame, err
 	charWidth := termInfo.Value.Get("charWidth").Num()
 	charHeight := termInfo.Value.Get("charHeight").Num()
 	cursorChar := termInfo.Value.Get("cursorChar").Str()
+	termCols := termInfo.Value.Get("termCols").Int()
+	termRows := termInfo.Value.Get("termRows").Int()
 
 	// Parse line colors
 	lineColors := [][]CharStyle{}
@@ -2058,8 +2067,10 @@ func CaptureSVGFrame(page *rod.Page, counter int, framerate int) (*SVGFrame, err
 		CursorY:    cursorY,
 		CharWidth:  charWidth,
 		CharHeight: charHeight,
-		Timestamp:  float64(counter) / float64(framerate),
+		Timestamp:  timestamp,
 		CursorChar: cursorChar,
+		TermCols:   termCols,
+		TermRows:   termRows,
 	}
 
 	return svgFrame, nil
@@ -2092,20 +2103,19 @@ func parseFontFamily(fontFamily string) []string {
 func buildSVGFontFamily(fontFamily string) string {
 	fonts := parseFontFamily(fontFamily)
 
-	// Build a new list without quotes - SVG will handle the attribute quoting
+	// Preserve ordinary names and quote names with CSS metacharacters.
 	fontList := make([]string, 0, len(fonts)+1)
 	hasMonospace := false
 
 	for _, font := range fonts {
 		// Check if this is a generic font family
-		if font == svgDefaultFontFamily || font == "ui-monospace" || font == "sans-serif" || font == "serif" {
-			fontList = append(fontList, font)
+		if font == svgDefaultFontFamily || font == uiMonospaceFont || font == "sans-serif" || font == "serif" {
+			fontList = append(fontList, cssFontFamily(font))
 			if font == svgDefaultFontFamily {
 				hasMonospace = true
 			}
 		} else {
-			// Add font names as-is, SVG attribute will be quoted
-			fontList = append(fontList, font)
+			fontList = append(fontList, cssFontFamily(font))
 		}
 	}
 

@@ -41,6 +41,8 @@ var (
 	quietFlag    bool
 	noSVGOpt     bool
 	debugConsole bool
+	browserPath  string
+	svgFontFile  string
 
 	//nolint:wrapcheck
 	rootCmd = &cobra.Command{
@@ -65,7 +67,11 @@ var (
 			// Set the input to the file contents if a file is given
 			// otherwise, use stdin
 			if len(args) > 0 && args[0] != "-" {
-				in, err = os.Open(args[0])
+				filename := args[0]
+				if !strings.HasSuffix(filename, extension) {
+					filename = filename + extension
+				}
+				in, err = os.Open(filename)
 				if err != nil {
 					return err
 				}
@@ -95,6 +101,8 @@ var (
 			errs := Evaluate(cmd.Context(), string(input), out,
 				WithSVGOptimization(!noSVGOpt),
 				WithDebugConsole(debugConsole),
+				WithBrowserPath(browserPath),
+				WithSVGFontFile(svgFontFile),
 				func(v *VHS) {
 					// Output is being overridden, prevent all outputs
 					if len(*outputs) <= 0 {
@@ -264,6 +272,8 @@ func init() {
 	rootCmd.Flags().BoolVarP(&publishFlag, "publish", "p", false, "publish your GIF to vhs.charm.sh and get a shareable URL")
 	rootCmd.PersistentFlags().BoolVarP(&quietFlag, "quiet", "q", false, "quiet do not log messages. If publish flag is provided, it will log shareable URL")
 	rootCmd.Flags().BoolVar(&noSVGOpt, "no-svg-opt", false, "disable SVG output optimization")
+	rootCmd.Flags().StringVar(&svgFontFile, "svg-font-file", "", "font file for capture and SVG embedding (or VHS_SVG_FONT_FILE)")
+	rootCmd.Flags().StringVar(&browserPath, "browser-path", "", "capture browser executable (or VHS_BROWSER_PATH)")
 	rootCmd.Flags().BoolVar(&debugConsole, "debug-console", false, "enable browser console logging")
 
 	outputs = rootCmd.Flags().StringSliceP("output", "o", []string{}, "file name(s) of video output")
@@ -302,8 +312,8 @@ func init() {
 var versionRegex = regexp.MustCompile(`\d+\.\d+\.\d+`)
 
 // getVersion returns the parsed version of a program.
-func getVersion(program string) *version.Version {
-	cmd := exec.Command(program, "--version") //nolint:noctx
+func getVersion(ctx context.Context, program string) *version.Version {
+	cmd := exec.CommandContext(ctx, program, "--version")
 	out, err := cmd.Output()
 	if err != nil {
 		return nil
@@ -328,7 +338,7 @@ func ensureDependencies() error {
 		return fmt.Errorf("%v is not installed", defaultShell)
 	}
 
-	ttydVersion := getVersion("ttyd")
+	ttydVersion := getVersion(context.Background(), "ttyd")
 	if ttydVersion == nil || ttydVersion.LessThan(ttydMinVersion) {
 		return fmt.Errorf("ttyd version (%s) is out of date, VHS requires %s\n%s",
 			ttydVersion,

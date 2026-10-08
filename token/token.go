@@ -1,5 +1,7 @@
 // Package token provides the token types and structures for the VHS Tape
 // language.
+//
+//nolint:revive
 package token
 
 import (
@@ -29,8 +31,8 @@ const (
 	DASH      = "-"
 
 	MINUS         = "-"
-	RIGHT_BRACKET = "]" //nolint:revive
-	LEFT_BRACKET  = "[" //nolint:revive
+	RIGHT_BRACKET = "]"
+	LEFT_BRACKET  = "["
 	CARET         = "^"
 
 	EM           = "EM"
@@ -42,21 +44,23 @@ const (
 	EOF     = "EOF"
 	ILLEGAL = "ILLEGAL"
 
-	ALT       = "ALT"
-	BACKSPACE = "BACKSPACE"
-	CTRL      = "CTRL"
-	DELETE    = "DELETE"
-	END       = "END"
-	ENTER     = "ENTER"
-	ESCAPE    = "ESCAPE"
-	HOME      = "HOME"
-	INSERT    = "INSERT"
-	PAGE_DOWN = "PAGE_DOWN" //nolint:revive
-	PAGE_UP   = "PAGE_UP"   //nolint:revive
-	SLEEP     = "SLEEP"
-	SPACE     = "SPACE"
-	TAB       = "TAB"
-	SHIFT     = "SHIFT"
+	ALT         = "ALT"
+	BACKSPACE   = "BACKSPACE"
+	CTRL        = "CTRL"
+	DELETE      = "DELETE"
+	END         = "END"
+	ENTER       = "ENTER"
+	ESCAPE      = "ESCAPE"
+	HOME        = "HOME"
+	INSERT      = "INSERT"
+	PAGE_DOWN   = "PAGE_DOWN"
+	PAGE_UP     = "PAGE_UP"
+	SCROLL_DOWN = "SCROLL_DOWN"
+	SCROLL_UP   = "SCROLL_UP"
+	SLEEP       = "SLEEP"
+	SPACE       = "SPACE"
+	TAB         = "TAB"
+	SHIFT       = "SHIFT"
 
 	COMMENT = "COMMENT"
 	NUMBER  = "NUMBER"
@@ -88,6 +92,8 @@ const (
 	PLAYBACK_SPEED         = "PLAYBACK_SPEED" //nolint:revive
 	HEIGHT                 = "HEIGHT"
 	WIDTH                  = "WIDTH"
+	ROWS                   = "ROWS"
+	COLUMNS                = "COLUMNS"
 	LETTER_SPACING         = "LETTER_SPACING" //nolint:revive
 	LINE_HEIGHT            = "LINE_HEIGHT"    //nolint:revive
 	TYPING_SPEED           = "TYPING_SPEED"   //nolint:revive
@@ -132,6 +138,8 @@ var Keywords = map[string]Type{
 	"Up":                  UP,
 	"PageUp":              PAGE_UP,
 	"PageDown":            PAGE_DOWN,
+	"ScrollUp":            SCROLL_UP,
+	"ScrollDown":          SCROLL_DOWN,
 	"Tab":                 TAB,
 	"Escape":              ESCAPE,
 	"End":                 END,
@@ -159,6 +167,8 @@ var Keywords = map[string]Type{
 	"Padding":             PADDING,
 	"Theme":               THEME,
 	"Width":               WIDTH,
+	"Rows":                ROWS,
+	"Columns":             COLUMNS,
 	"LoopOffset":          LOOP_OFFSET,
 	"WaitTimeout":         WAIT_TIMEOUT,
 	"WaitPattern":         WAIT_PATTERN,
@@ -178,6 +188,7 @@ func IsSetting(t Type) bool {
 	switch t {
 	case SHELL, FONT_FAMILY, FONT_SIZE, LETTER_SPACING, LINE_HEIGHT,
 		FRAMERATE, TYPING_SPEED, THEME, PLAYBACK_SPEED, HEIGHT, WIDTH,
+		ROWS, COLUMNS,
 		PADDING, LOOP_OFFSET, MARGIN_FILL, MARGIN, WINDOW_BAR,
 		WINDOW_BAR_SIZE, WINDOW_BAR_TITLE, WINDOW_BAR_FONT_FAMILY, WINDOW_BAR_FONT_SIZE, BORDER_RADIUS, CURSOR_BLINK, WAIT_TIMEOUT, WAIT_PATTERN:
 		return true
@@ -190,7 +201,7 @@ func IsSetting(t Type) bool {
 func IsCommand(t Type) bool {
 	switch t {
 	case TYPE, SLEEP,
-		UP, DOWN, RIGHT, LEFT, PAGE_UP, PAGE_DOWN,
+		UP, DOWN, RIGHT, LEFT, PAGE_UP, PAGE_DOWN, SCROLL_UP, SCROLL_DOWN,
 		ENTER, BACKSPACE, DELETE, TAB,
 		ESCAPE, HOME, INSERT, END, CTRL, SOURCE, SCREENSHOT, COPY, PASTE, WAIT:
 		return true
