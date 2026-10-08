@@ -225,10 +225,9 @@ func (g *SVGGenerator) Generate() string {
 		totalWidth += style.Margin * 2
 		totalHeight += style.Margin * 2
 	}
-
 	// SVG root element
-	sb.WriteString(fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">`,
-		totalWidth, totalHeight))
+	_, _ = fmt.Fprintf(&sb, `<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">`,
+		totalWidth, totalHeight)
 	g.writeNewline(&sb)
 
 	// Add margin group if needed
@@ -237,10 +236,10 @@ func (g *SVGGenerator) Generate() string {
 		if marginColor == "" {
 			marginColor = defaultMarginColor
 		}
-		sb.WriteString(fmt.Sprintf(`<rect width="%d" height="%d" fill="%s"/>`,
-			totalWidth, totalHeight, marginColor))
+		_, _ = fmt.Fprintf(&sb, `<rect width="%d" height="%d" fill="%s"/>`,
+			totalWidth, totalHeight, marginColor)
 		g.writeNewline(&sb)
-		sb.WriteString(fmt.Sprintf(`<g transform="translate(%d,%d)">`, style.Margin, style.Margin))
+		_, _ = fmt.Fprintf(&sb, `<g transform="translate(%d,%d)">`, style.Margin, style.Margin)
 		g.writeNewline(&sb)
 	}
 
@@ -270,10 +269,9 @@ func (g *SVGGenerator) Generate() string {
 	// viewBox width should match frame spacing (one frame width), height matches terminal
 	viewBoxWidth := g.frameSpacing
 	viewBoxHeight := float64(innerHeight)
-
 	// Create inner SVG with viewBox that shows one frame at a time
-	sb.WriteString(fmt.Sprintf(`<svg x="%d" y="%d" width="%d" height="%d" viewBox="0 0 %s %s">`,
-		innerX, innerY, innerWidth, innerHeight, formatCoord(viewBoxWidth), formatCoord(viewBoxHeight)))
+	_, _ = fmt.Fprintf(&sb, `<svg x="%d" y="%d" width="%d" height="%d" viewBox="0 0 %s %s">`,
+		innerX, innerY, innerWidth, innerHeight, formatCoord(viewBoxWidth), formatCoord(viewBoxHeight))
 	g.writeNewline(&sb)
 
 	// Add terminal background
@@ -281,8 +279,8 @@ func (g *SVGGenerator) Generate() string {
 	if terminalBgColor == "" {
 		terminalBgColor = defaultMarginColor
 	}
-	sb.WriteString(fmt.Sprintf(`<rect width="%s" height="%s" fill="%s"/>`,
-		formatCoord(viewBoxWidth), formatCoord(viewBoxHeight), terminalBgColor))
+	_, _ = fmt.Fprintf(&sb, `<rect width="%s" height="%s" fill="%s"/>`,
+		formatCoord(viewBoxWidth), formatCoord(viewBoxHeight), terminalBgColor)
 	g.writeNewline(&sb)
 
 	// Add styles including CSS animation
@@ -1004,8 +1002,8 @@ func (g *SVGGenerator) generateStyles() string {
 	}
 	for _, stop := range g.timeline {
 		offset := -float64(stop.StateIndex) * g.frameSpacing
-		sb.WriteString(fmt.Sprintf("  %s%% { transform: translateX(%spx); }",
-			formatPercentage(stop.Percentage, keyframeCount), formatCoord(offset)))
+		_, _ = fmt.Fprintf(&sb, "  %s%% { transform: translateX(%spx); }",
+			formatPercentage(stop.Percentage, keyframeCount), formatCoord(offset))
 		g.writeNewline(&sb)
 	}
 
@@ -1024,9 +1022,8 @@ func (g *SVGGenerator) generateStyles() string {
 
 	// LoopOffset uses the same percentage contract as raster output.
 	animationDelay := -animationDuration * g.options.LoopOffset / 100
-
 	// Use step-end timing to ensure frames change instantly
-	sb.WriteString(fmt.Sprintf("  animation: slide %ss step-end %ss infinite;", formatDuration(animationDuration), formatDuration(animationDelay)))
+	_, _ = fmt.Fprintf(&sb, "  animation: slide %ss step-end %ss infinite;", formatDuration(animationDuration), formatDuration(animationDelay))
 	g.writeNewline(&sb)
 	sb.WriteString("}")
 	g.writeNewline(&sb)
@@ -1061,7 +1058,7 @@ func (g *SVGGenerator) generateStyles() string {
 		foregroundColor, fontFamily, formatCoord(g.fontSize))
 	// Don't apply letter-spacing in SVG as it causes cursor misalignment
 	// The character positions from xterm.js already account for the terminal's letter spacing
-	sb.WriteString(fmt.Sprintf(".%s { %s }", textClass, textStyle))
+	_, _ = fmt.Fprintf(&sb, ".%s { %s }", textClass, textStyle)
 	g.writeNewline(&sb)
 
 	// Add ANSI color classes - use a map to avoid duplicates
@@ -1089,32 +1086,31 @@ func (g *SVGGenerator) generateStyles() string {
 			"w": theme.White,
 		}
 		for name, color := range shortColorClasses {
-			sb.WriteString(fmt.Sprintf(".%s { fill: %s; }", name, color))
+			_, _ = fmt.Fprintf(&sb, ".%s { fill: %s; }", name, color)
 			g.writeNewline(&sb)
 		}
 		// Add prompt color class if we detect it's used frequently
 		if theme.BrightBlue != "" {
-			sb.WriteString(fmt.Sprintf(".p { fill: %s; }", theme.BrightBlue)) // prompt color
+			_, _ = fmt.Fprintf(&sb, ".p { fill: %s; }", theme.BrightBlue) // prompt color
 			g.writeNewline(&sb)
 		}
 	} else {
 		for name, color := range colorClasses {
-			sb.WriteString(fmt.Sprintf(".%s { fill: %s; }", name, color))
+			_, _ = fmt.Fprintf(&sb, ".%s { fill: %s; }", name, color)
 			g.writeNewline(&sb)
 		}
 	}
-
 	// Cursor styles - for inline cursor with background
 	// Note: SVG doesn't support background property on tspan, we'll need to use a different approach
 	// We'll render a rect behind the cursor character
 	// Active cursor is always visible
-	sb.WriteString(fmt.Sprintf(".%s { }", cursorActiveClass))
+	_, _ = fmt.Fprintf(&sb, ".%s { }", cursorActiveClass)
 	g.writeNewline(&sb)
 	// Idle cursor blinks
 	if g.options.CursorBlink {
 		sb.WriteString("@keyframes blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }")
 		g.writeNewline(&sb)
-		sb.WriteString(fmt.Sprintf(".%s { animation: blink 1s infinite; }", cursorIdleClass))
+		_, _ = fmt.Fprintf(&sb, ".%s { animation: blink 1s infinite; }", cursorIdleClass)
 		g.writeNewline(&sb)
 	}
 
@@ -1130,8 +1126,7 @@ func (g *SVGGenerator) generateState(index int, state *TerminalState) string {
 
 	// Position this state in the animation sequence
 	xOffset := float64(index) * g.frameSpacing
-
-	sb.WriteString(fmt.Sprintf(`<g transform="translate(%s,0)">`, formatCoord(xOffset)))
+	_, _ = fmt.Fprintf(&sb, `<g transform="translate(%s,0)">`, formatCoord(xOffset))
 	g.writeNewline(&sb)
 
 	// Debug specific state with background colors
@@ -1229,8 +1224,8 @@ func (g *SVGGenerator) generateState(index int, state *TerminalState) string {
 							log.Printf("Rendering background rect at (%d,%d) with color %s", x, y, style.BgColor)
 						}
 						charX := float64(x) * g.charWidth
-						sb.WriteString(fmt.Sprintf(`<rect x="%s" y="%s" width="%s" height="%s" fill="%s" shape-rendering="crispEdges"/>`,
-							formatCoord(charX), formatCoord(float64(y)*g.charHeight*lineHeight), formatCoord(g.charWidth), formatCoord(g.charHeight), style.BgColor))
+						_, _ = fmt.Fprintf(&sb, `<rect x="%s" y="%s" width="%s" height="%s" fill="%s" shape-rendering="crispEdges"/>`,
+							formatCoord(charX), formatCoord(float64(y)*g.charHeight*lineHeight), formatCoord(g.charWidth), formatCoord(g.charHeight), style.BgColor)
 						g.writeNewline(&sb)
 					}
 				}
@@ -1270,10 +1265,11 @@ func (g *SVGGenerator) generateState(index int, state *TerminalState) string {
 				} else {
 					beforeCursor = string(runes)
 				}
+				_, _ = fmt.
 
-				// Render all text in a single text element with inline cursor
-				// Add xml:space="preserve" to preserve whitespace
-				sb.WriteString(fmt.Sprintf(`<text y="%s" xml:space="preserve">`, formatCoord(yPos)))
+					// Render all text in a single text element with inline cursor
+					// Add xml:space="preserve" to preserve whitespace
+					Fprintf(&sb, `<text y="%s" xml:space="preserve">`, formatCoord(yPos))
 
 				// Render text before cursor with proper styling
 				if beforeCursor != "" {
@@ -1301,13 +1297,15 @@ func (g *SVGGenerator) generateState(index int, state *TerminalState) string {
 				// Render cursor inline
 				// For a true inline solution, we'll render the cursor as a colored block character
 				if state.CursorChar != "" && state.CursorChar != " " {
-					// Use the cursor character from xterm.js (usually █)
-					sb.WriteString(fmt.Sprintf(`<tspan class="%s %s" style="fill:%s;">%s</tspan>`,
-						g.textClass, cursorClass, cursorBgColor, html.EscapeString(state.CursorChar)))
+					_, _ = fmt.
+						// Use the cursor character from xterm.js (usually █)
+						Fprintf(&sb, `<tspan class="%s %s" style="fill:%s;">%s</tspan>`,
+							g.textClass, cursorClass, cursorBgColor, html.EscapeString(state.CursorChar))
 				} else {
-					// Fallback to block character
-					sb.WriteString(fmt.Sprintf(`<tspan class="%s %s" style="fill:%s;">█</tspan>`,
-						g.textClass, cursorClass, cursorBgColor))
+					_, _ = fmt.
+						// Fallback to block character
+						Fprintf(&sb, `<tspan class="%s %s" style="fill:%s;">█</tspan>`,
+							g.textClass, cursorClass, cursorBgColor)
 				}
 
 				// Render text after cursor
@@ -1382,9 +1380,9 @@ func (g *SVGGenerator) generateState(index int, state *TerminalState) string {
 						}
 
 						if styleStr != "" {
-							sb.WriteString(fmt.Sprintf(`<tspan class="%s" style="%s">%s</tspan>`, classes, styleStr, html.EscapeString(segmentText)))
+							_, _ = fmt.Fprintf(&sb, `<tspan class="%s" style="%s">%s</tspan>`, classes, styleStr, html.EscapeString(segmentText))
 						} else {
-							sb.WriteString(fmt.Sprintf(`<tspan class="%s">%s</tspan>`, classes, html.EscapeString(segmentText)))
+							_, _ = fmt.Fprintf(&sb, `<tspan class="%s">%s</tspan>`, classes, html.EscapeString(segmentText))
 						}
 					}
 				}
@@ -1392,9 +1390,10 @@ func (g *SVGGenerator) generateState(index int, state *TerminalState) string {
 				sb.WriteString("</text>")
 				g.writeNewline(&sb)
 			} else {
-				// No cursor on this line, render normally
-				// Add xml:space="preserve" to preserve whitespace
-				sb.WriteString(fmt.Sprintf(`<text y="%s" xml:space="preserve">`, formatCoord(yPos)))
+				_, _ = fmt.
+					// No cursor on this line, render normally
+					// Add xml:space="preserve" to preserve whitespace
+					Fprintf(&sb, `<text y="%s" xml:space="preserve">`, formatCoord(yPos))
 				g.renderTextSegment(&sb, string(runes), y, 0, len(runes), hasColors, state.LineColors)
 				sb.WriteString("</text>")
 				g.writeNewline(&sb)
@@ -1639,9 +1638,8 @@ func (g *SVGGenerator) generateTerminalWindow() string {
 	if bgColor == "" {
 		bgColor = defaultBarColor
 	}
-
-	sb.WriteString(fmt.Sprintf(`<rect width="%d" height="%d" rx="%d" fill="%s"/>`,
-		g.options.Width, g.options.Height, borderRadius, bgColor))
+	_, _ = fmt.Fprintf(&sb, `<rect width="%d" height="%d" rx="%d" fill="%s"/>`,
+		g.options.Width, g.options.Height, borderRadius, bgColor)
 	g.writeNewline(&sb)
 
 	// Window bar if enabled
@@ -1675,11 +1673,10 @@ func (g *SVGGenerator) generateWindowBar() string {
 
 	sb.WriteString(`<g id="window-bar">`)
 	g.writeNewline(&sb)
-
 	// Bar background with rounded top corners
-	sb.WriteString(fmt.Sprintf(`<path d="M %d,0 L %d,0 Q %d,0 %d,%d L %d,%d L 0,%d L 0,%d Q 0,0 %d,0 Z" fill="%s"/>`,
+	_, _ = fmt.Fprintf(&sb, `<path d="M %d,0 L %d,0 Q %d,0 %d,%d L %d,%d L 0,%d L 0,%d Q 0,0 %d,0 Z" fill="%s"/>`,
 		borderRadius, g.options.Width-borderRadius, g.options.Width, g.options.Width, borderRadius,
-		g.options.Width, barSize, barSize, borderRadius, borderRadius, barColor))
+		g.options.Width, barSize, barSize, borderRadius, borderRadius, barColor)
 	g.writeNewline(&sb)
 
 	// Window controls based on style
@@ -1688,28 +1685,28 @@ func (g *SVGGenerator) generateWindowBar() string {
 		// Colorful circles on the left (macOS-style)
 		for i, color := range windowControlColors {
 			x := 20 + i*20
-			sb.WriteString(fmt.Sprintf(`<circle cx="%d" cy="%d" r="6" fill="%s"/>`, x, barSize/2, color))
+			_, _ = fmt.Fprintf(&sb, `<circle cx="%d" cy="%d" r="6" fill="%s"/>`, x, barSize/2, color)
 			g.writeNewline(&sb)
 		}
 	case "ColorfulRight":
 		// Colorful circles on the right
 		for i, color := range windowControlColors {
 			x := g.options.Width - 80 + i*20
-			sb.WriteString(fmt.Sprintf(`<circle cx="%d" cy="%d" r="6" fill="%s"/>`, x, barSize/2, color))
+			_, _ = fmt.Fprintf(&sb, `<circle cx="%d" cy="%d" r="6" fill="%s"/>`, x, barSize/2, color)
 			g.writeNewline(&sb)
 		}
 	case "Rings":
 		// Ring circles on the left
 		for i, color := range windowControlColors {
 			x := 20 + i*20
-			sb.WriteString(fmt.Sprintf(`<circle cx="%d" cy="%d" r="6" fill="none" stroke="%s" stroke-width="1"/>`, x, barSize/2, color))
+			_, _ = fmt.Fprintf(&sb, `<circle cx="%d" cy="%d" r="6" fill="none" stroke="%s" stroke-width="1"/>`, x, barSize/2, color)
 			g.writeNewline(&sb)
 		}
 	case "RingsRight":
 		// Ring circles on the right
 		for i, color := range windowControlColors {
 			x := g.options.Width - 80 + i*20
-			sb.WriteString(fmt.Sprintf(`<circle cx="%d" cy="%d" r="6" fill="none" stroke="%s" stroke-width="1"/>`, x, barSize/2, color))
+			_, _ = fmt.Fprintf(&sb, `<circle cx="%d" cy="%d" r="6" fill="none" stroke="%s" stroke-width="1"/>`, x, barSize/2, color)
 			g.writeNewline(&sb)
 		}
 	}
@@ -1753,9 +1750,8 @@ func (g *SVGGenerator) generateWindowBar() string {
 		// The text will be centered but constrained to avoid overlapping with window controls
 		// Window controls occupy roughly 80px on each side
 		centerX := g.options.Width / 2
-
-		sb.WriteString(fmt.Sprintf(`<text x="%d" y="%d" text-anchor="middle" font-family="%s" font-size="%d" fill="#cccccc">`,
-			centerX, yPos, fontFamily, fontSize))
+		_, _ = fmt.Fprintf(&sb, `<text x="%d" y="%d" text-anchor="middle" font-family="%s" font-size="%d" fill="#cccccc">`,
+			centerX, yPos, fontFamily, fontSize)
 		sb.WriteString(html.EscapeString(style.WindowBarTitle))
 		sb.WriteString(`</text>`)
 		g.writeNewline(&sb)
@@ -2075,7 +2071,7 @@ func buildSVGFontFamily(fontFamily string) string {
 
 	for _, font := range fonts {
 		// Check if this is a generic font family
-		if font == svgDefaultFontFamily || font == "ui-monospace" || font == "sans-serif" || font == "serif" {
+		if font == svgDefaultFontFamily || font == uiMonospaceFont || font == "sans-serif" || font == "serif" {
 			fontList = append(fontList, font)
 			if font == svgDefaultFontFamily {
 				hasMonospace = true
