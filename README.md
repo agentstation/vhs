@@ -228,6 +228,14 @@ Use `--svg-font-file` or `VHS_SVG_FONT_FILE` to load an exact font into the capt
 This option overrides `Set FontFamily`. Supported file extensions are `.woff2`, `.woff`, `.ttf`, and `.otf`.
 Use a font whose license permits embedding.
 
+For SVG output, a single installed family set with `Set FontFamily` also embeds automatically when `fc-match` is available.
+VHS loads that selected face before measuring the terminal. A separate named `WindowBarFontFamily` embeds its own face.
+Generic families and comma-separated fallback stacks keep their existing behavior.
+
+With optional FontTools `pyftsubset`, optimized SVG output includes a smaller font with the displayed terminal, cursor, and title glyphs.
+If subsetting is unavailable or fails, VHS embeds the full selected face. If discovery is unavailable, capture continues with a diagnostic.
+An explicit font file takes priority and retains its exact bytes without subsetting.
+
 ## Record Tapes
 
 VHS has the ability to generate tape files from your terminal actions!
@@ -976,7 +984,8 @@ This fork adds several command-line options to enhance VHS functionality:
 ### Output Control
 
 ```sh
-# Disable SVG minification and short class names (optimization is enabled by default)
+# Disable SVG minification, short class names, and automatic font subsetting
+# Optimization is enabled by default
 vhs demo.tape --no-svg-opt
 
 # Specify multiple output formats

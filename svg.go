@@ -72,6 +72,7 @@ type SVGConfig struct {
 	FontData      string
 	FontMIME      string
 	FontFormat    string
+	TitleFont     svgFont
 }
 
 // TerminalState represents a unique terminal state for deduplication.
@@ -145,6 +146,14 @@ type SVGGenerator struct {
 
 // NewSVGGenerator creates a new SVG generator.
 func NewSVGGenerator(opts SVGConfig) *SVGGenerator {
+	if opts.FontData != "" && strings.Contains(opts.FontFamily, ",") {
+		opts.FontFamily = captureFontFamily
+		if opts.Style != nil {
+			style := *opts.Style
+			style.FontFamily = captureFontFamily
+			opts.Style = &style
+		}
+	}
 	// Get character dimensions from the first frame if available
 	charWidth := float64(opts.FontSize) * 0.55 // fallback
 	charHeight := float64(opts.FontSize) * 1.2 // fallback
@@ -994,8 +1003,15 @@ func (g *SVGGenerator) generateStyles() string {
 	g.writeNewline(&sb)
 
 	if g.options.FontData != "" {
-		fmt.Fprintf(&sb, `@font-face { font-family: "%s"; src: url("data:%s;base64,%s") format("%s"); }`,
-			captureFontFamily, g.options.FontMIME, g.options.FontData, g.options.FontFormat)
+		family := g.options.FontFamily
+		if family == "" {
+			family = svgDefaultFontFamily
+		}
+		sb.WriteString((svgFont{data: g.options.FontData, mime: g.options.FontMIME, format: g.options.FontFormat}).cssFace(family))
+		g.writeNewline(&sb)
+	}
+	if g.options.TitleFont.data != "" {
+		sb.WriteString(g.options.TitleFont.cssFace(titleFontFamily))
 		g.writeNewline(&sb)
 	}
 
@@ -1078,8 +1094,8 @@ func (g *SVGGenerator) generateStyles() string {
 		foregroundColor = defaultForegroundColor
 	}
 	// Use a simpler font stack for better compatibility
-	textStyle := fmt.Sprintf("fill: %s; font-family: %s, monospace; font-size: %spx;",
-		foregroundColor, fontFamily, formatCoord(g.fontSize))
+	textStyle := fmt.Sprintf("fill: %s; font-family: %s; font-size: %spx;",
+		foregroundColor, buildSVGFontFamily(fontFamily), formatCoord(g.fontSize))
 	// Don't apply letter-spacing in SVG as it causes cursor misalignment
 	// The character positions from xterm.js already account for the terminal's letter spacing
 	_, _ = fmt.Fprintf(&sb, ".%s { %s }", textClass, textStyle)
@@ -1747,6 +1763,9 @@ func (g *SVGGenerator) generateWindowBar() string {
 	if style.WindowBarTitle != "" {
 		// Get the appropriate font family with fallbacks
 		fontFamily := getWindowBarFontFamily(style, g.options.FontFamily)
+		if g.options.TitleFont.data != "" {
+			fontFamily = buildSVGFontFamily(titleFontFamily)
+		}
 		// Get the appropriate font size with fallback
 		fontSize := style.WindowBarFontSize
 		if fontSize == 0 {
@@ -1783,7 +1802,7 @@ func (g *SVGGenerator) generateWindowBar() string {
 		// Window controls occupy roughly 80px on each side
 		centerX := g.options.Width / 2
 		_, _ = fmt.Fprintf(&sb, `<text x="%d" y="%d" text-anchor="middle" font-family="%s" font-size="%d" fill="#cccccc">`,
-			centerX, yPos, fontFamily, fontSize)
+			centerX, yPos, html.EscapeString(fontFamily), fontSize)
 		sb.WriteString(html.EscapeString(style.WindowBarTitle))
 		sb.WriteString(`</text>`)
 		g.writeNewline(&sb)
@@ -2103,20 +2122,19 @@ func parseFontFamily(fontFamily string) []string {
 func buildSVGFontFamily(fontFamily string) string {
 	fonts := parseFontFamily(fontFamily)
 
-	// Build a new list without quotes - SVG will handle the attribute quoting
+	// Preserve ordinary names and quote names with CSS metacharacters.
 	fontList := make([]string, 0, len(fonts)+1)
 	hasMonospace := false
 
 	for _, font := range fonts {
 		// Check if this is a generic font family
 		if font == svgDefaultFontFamily || font == uiMonospaceFont || font == "sans-serif" || font == "serif" {
-			fontList = append(fontList, font)
+			fontList = append(fontList, cssFontFamily(font))
 			if font == svgDefaultFontFamily {
 				hasMonospace = true
 			}
 		} else {
-			// Add font names as-is, SVG attribute will be quoted
-			fontList = append(fontList, font)
+			fontList = append(fontList, cssFontFamily(font))
 		}
 	}
 

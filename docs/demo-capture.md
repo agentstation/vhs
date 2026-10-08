@@ -95,6 +95,14 @@ This option overrides `Set FontFamily` for capture and SVG output.
 The caller must supply a font whose license permits embedding.
 The file loads before capture, without `fc-match` or `pyftsubset`.
 
+Single named installed families now use optional `fc-match` discovery before capture.
+The capture browser and SVG use the same selected face, including the actual face index in font collections.
+Optional `pyftsubset` reduces automatic fonts to all displayed frame, cursor, and applicable title glyphs.
+A separate named title family embeds a separate face.
+
+Failed or missing subsetting retains the full selected font.
+Explicit file bytes remain unchanged. Generic families and fallback stacks do not use automatic embedding.
+
 ## Validation
 
 The Go suite and race checks pass. Focused regressions cover slow capture, hidden spans,

@@ -22,25 +22,28 @@ import (
 
 // VHS is the object that controls the setup.
 type VHS struct {
-	Options        *Options
-	Errors         []error
-	Page           *rod.Page
-	browser        *rod.Browser
-	TextCanvas     *rod.Element
-	CursorCanvas   *rod.Element
-	mutex          *sync.Mutex
-	started        bool
-	recording      bool
-	tty            *exec.Cmd
-	totalFrames    int
-	close          func() error
-	svgFrames      []SVGFrame
-	rasterFrames   []float64
-	timeline       recordingTimeline
-	duration       time.Duration
-	svgFont        svgFont
-	widthExplicit  bool
-	heightExplicit bool
+	Options           *Options
+	Errors            []error
+	Page              *rod.Page
+	browser           *rod.Browser
+	TextCanvas        *rod.Element
+	CursorCanvas      *rod.Element
+	mutex             *sync.Mutex
+	started           bool
+	recording         bool
+	tty               *exec.Cmd
+	totalFrames       int
+	close             func() error
+	svgFrames         []SVGFrame
+	rasterFrames      []float64
+	timeline          recordingTimeline
+	duration          time.Duration
+	svgFont           svgFont
+	svgTitleFont      svgFont
+	svgOriginalFamily string
+	svgOutputFonts    *svgFonts
+	widthExplicit     bool
+	heightExplicit    bool
 }
 
 // Options is the set of options for the setup.
@@ -378,9 +381,9 @@ func (vhs *VHS) Setup() error {
 	// pixel size of a rendered character cell, which the Rows/Columns case
 	// needs in order to compute the viewport, and FontSize/FontFamily/
 	// LetterSpacing/LineHeight all affect it.
-	if _, err := vhs.Page.Eval(fmt.Sprintf("() => { term.options = { fontSize: %d, fontFamily: '%s', letterSpacing: %f, lineHeight: %f, theme: %s, cursorBlink: %t } }",
-		vhs.Options.FontSize, vhs.Options.FontFamily, vhs.Options.LetterSpacing,
-		vhs.Options.LineHeight, vhs.Options.Theme.String(), vhs.Options.CursorBlink)); err != nil {
+	if _, err := vhs.Page.Eval(fmt.Sprintf("fontFamily => { term.options = { fontSize: %d, fontFamily, letterSpacing: %f, lineHeight: %f, theme: %s, cursorBlink: %t } }",
+		vhs.Options.FontSize, vhs.Options.LetterSpacing,
+		vhs.Options.LineHeight, vhs.Options.Theme.String(), vhs.Options.CursorBlink), vhs.Options.FontFamily); err != nil {
 		return fmt.Errorf("failed to configure terminal: %w", err)
 	}
 
@@ -451,6 +454,13 @@ func (vhs *VHS) resolveRowsColumns(padding, margin, bar int) error {
 	style := vhs.Options.Video.Style
 
 	measure := func(w, h int) (cols, rows int, err error) {
+		// Validate the same even outer viewport that rendering will use.
+		if style.Columns > 0 {
+			w = roundUpToEven(w+double(padding)+double(margin)) - double(padding) - double(margin)
+		}
+		if style.Rows > 0 {
+			h = roundUpToEven(h+double(padding)+double(margin)+bar) - double(padding) - double(margin) - bar
+		}
 		if err := vhs.fitTerminalViewport(w, h); err != nil {
 			return 0, 0, err
 		}
@@ -506,11 +516,17 @@ func (vhs *VHS) resolveRowsColumns(padding, margin, bar int) error {
 		contentHeight = int(math.Round(cellHeight * float64(style.Rows)))
 	}
 
-	// xterm's fit addon floors container-size / cell-size, so the estimate
-	// above can be off by a cell. Nudge the content size until the measured
-	// cols/rows exactly match what was requested.
+	// Keep measured bounds when the cell estimate overshoots the requested grid.
+	// Testing only encoder-compatible viewports avoids a later parity change.
+	var minWidth, maxWidth, minHeight, maxHeight int
 	var corrected bool
 	for range dimensionCorrectionAttempts {
+		if style.Columns > 0 {
+			contentWidth = roundUpToEven(contentWidth+double(padding)+double(margin)) - double(padding) - double(margin)
+		}
+		if style.Rows > 0 {
+			contentHeight = roundUpToEven(contentHeight+double(padding)+double(margin)+bar) - double(padding) - double(margin) - bar
+		}
 		cols, rows, err := measure(contentWidth, contentHeight)
 		if err != nil {
 			return err
@@ -519,11 +535,29 @@ func (vhs *VHS) resolveRowsColumns(padding, margin, bar int) error {
 
 		converged := true
 		if style.Columns > 0 && cols != style.Columns {
-			contentWidth += int(math.Round(float64(style.Columns-cols) * cellWidth))
+			if cols < style.Columns {
+				minWidth = contentWidth
+			} else {
+				maxWidth = contentWidth
+			}
+			if minWidth > 0 && maxWidth > 0 {
+				contentWidth = minWidth + (maxWidth-minWidth)/2
+			} else {
+				contentWidth += int(math.Round(float64(style.Columns-cols) * cellWidth))
+			}
 			converged = false
 		}
 		if style.Rows > 0 && rows != style.Rows {
-			contentHeight += int(math.Round(float64(style.Rows-rows) * cellHeight))
+			if rows < style.Rows {
+				minHeight = contentHeight
+			} else {
+				maxHeight = contentHeight
+			}
+			if minHeight > 0 && maxHeight > 0 {
+				contentHeight = minHeight + (maxHeight-minHeight)/2
+			} else {
+				contentHeight += int(math.Round(float64(style.Rows-rows) * cellHeight))
+			}
 			converged = false
 		}
 		if converged {
@@ -625,6 +659,9 @@ func (vhs *VHS) Render(ctx context.Context) error {
 	// Ensure the font family and size are set in the style
 	if vhs.Options.Video.Style != nil {
 		vhs.Options.Video.Style.FontFamily = vhs.Options.FontFamily
+		if vhs.svgOriginalFamily != "" {
+			vhs.Options.Video.Style.FontFamily = vhs.svgOriginalFamily
+		}
 		vhs.Options.Video.Style.FontSize = vhs.Options.FontSize
 	}
 
@@ -650,7 +687,7 @@ func (vhs *VHS) Render(ctx context.Context) error {
 	}
 
 	// Generate SVG if requested
-	if err := MakeSVG(vhs); err != nil {
+	if err := makeSVG(ctx, vhs); err != nil {
 		return fmt.Errorf("failed to generate SVG: %w", err)
 	}
 

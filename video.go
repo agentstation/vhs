@@ -173,6 +173,10 @@ func MakeMP4(ctx context.Context, opts VideoOptions) *exec.Cmd {
 
 // MakeSVG generates an animated SVG from captured frames.
 func MakeSVG(v *VHS) error {
+	return makeSVG(context.Background(), v)
+}
+
+func makeSVG(ctx context.Context, v *VHS) error {
 	if v.Options.Video.Output.SVG == "" {
 		return nil
 	}
@@ -185,6 +189,12 @@ func MakeSVG(v *VHS) error {
 
 	// Include the final visible hold after the last capture.
 	duration := v.duration.Seconds()
+	if err := v.prepareSVGFonts(ctx); err != nil {
+		return err
+	}
+	font, title := v.svgOutputFonts.terminal, v.svgOutputFonts.title
+	style := *v.Options.Video.Style
+	style.FontFamily = v.Options.FontFamily
 
 	// Create SVG config
 	svgOpts := SVGConfig{
@@ -195,16 +205,17 @@ func MakeSVG(v *VHS) error {
 		Theme:         v.Options.Theme,
 		Frames:        v.svgFrames,
 		Duration:      duration,
-		Style:         v.Options.Video.Style,
+		Style:         &style,
 		LineHeight:    v.Options.LineHeight,
 		CursorBlink:   v.Options.CursorBlink,
 		PlaybackSpeed: v.Options.Video.PlaybackSpeed,
 		LoopOffset:    v.Options.LoopOffset,
 		OptimizeSize:  v.Options.SVG.OptimizeSize,
 		Debug:         v.Options.DebugConsole,
-		FontData:      v.svgFont.data,
-		FontMIME:      v.svgFont.mime,
-		FontFormat:    v.svgFont.format,
+		FontData:      font.data,
+		FontMIME:      font.mime,
+		FontFormat:    font.format,
+		TitleFont:     title,
 	}
 
 	// Generate SVG

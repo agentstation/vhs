@@ -534,7 +534,7 @@ func ExecuteSetFontSize(c parser.Command, v *VHS) error {
 // ExecuteSetFontFamily applies the font family on the vhs.
 func ExecuteSetFontFamily(c parser.Command, v *VHS) error {
 	v.Options.FontFamily = c.Args
-	_, err := v.Page.Eval(fmt.Sprintf("() => term.options.fontFamily = '%s'", withSymbolsFallback(c.Args)))
+	_, err := v.Page.Eval("family => term.options.fontFamily = family", withSymbolsFallback(c.Args))
 	if err != nil {
 		return fmt.Errorf("failed to set font family: %w", err)
 	}

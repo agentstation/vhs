@@ -163,11 +163,16 @@ func Evaluate(ctx context.Context, tape string, out io.Writer, opts ...Evaluator
 		_ = v.Cleanup()
 	}()
 
-	teardown := func() []error {
+	teardown := func(prepareFonts bool) []error {
 		cancel()
 		var errs []error
 		for err := range ch {
 			errs = append(errs, err)
+		}
+		if prepareFonts && len(errs) == 0 {
+			if err := v.prepareSVGFonts(ctx); err != nil {
+				errs = append(errs, err)
+			}
 		}
 		// Commands have stopped, so browser cleanup cannot interrupt their rod calls.
 		_ = v.terminate()
@@ -179,12 +184,12 @@ func Evaluate(ctx context.Context, tape string, out io.Writer, opts ...Evaluator
 		select {
 		case err := <-ch:
 			if err != nil {
-				return append([]error{err}, teardown()...)
+				return append([]error{err}, teardown(false)...)
 			}
 		default:
 		}
 		if ctx.Err() != nil {
-			return append(teardown(), ctx.Err())
+			return append(teardown(false), ctx.Err())
 		}
 
 		// When changing the FontFamily, FontSize, LineHeight, Padding
@@ -207,7 +212,7 @@ func Evaluate(ctx context.Context, tape string, out io.Writer, opts ...Evaluator
 		_, _ = fmt.Fprintln(out, Highlight(cmd, !v.isRecording() || cmd.Type == token.SHOW || cmd.Type == token.HIDE || isSetting))
 		err := Execute(cmd, &v)
 		if err != nil {
-			return append(teardown(), err)
+			return append(teardown(false), err)
 		}
 	}
 
@@ -223,7 +228,7 @@ func Evaluate(ctx context.Context, tape string, out io.Writer, opts ...Evaluator
 		opt(&v)
 	}
 
-	if errs := teardown(); len(errs) > 0 {
+	if errs := teardown(true); len(errs) > 0 {
 		return errs
 	}
 	if err := v.Render(ctx); err != nil {
