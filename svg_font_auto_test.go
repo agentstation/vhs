@@ -106,7 +106,7 @@ func TestRasterOnlySkipsAutomaticSVGFonts(t *testing.T) {
 	v := New()
 	t.Cleanup(func() { _ = v.Cleanup() })
 	v.Options.Video.Output.GIF = "capture.gif"
-	v.Options.SVG.FontFile = "missing.ttf"
+	t.Setenv("VHS_SVG_FONT_FILE", "")
 	v.Options.FontFamily = "Named Font"
 	if err := v.installSVGFont(); err != nil || v.Options.FontFamily != "Named Font" {
 		t.Fatalf("raster-only capture changed font selection: %v", err)

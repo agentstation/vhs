@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"fmt"
@@ -202,4 +203,49 @@ func TestEvaluateAutomaticSVGFontSubset(t *testing.T) {
 	font := svgFont{data: string(match[1]), mime: "font/woff2", format: "woff2"}
 	checkSubsetGlyphs(t, font, "WimΩé")
 	t.Logf("Evaluate portable SVG %d bytes; embedded font base64 %d bytes, full font base64 %d", len(data), len(match[1]), len(base64.StdEncoding.EncodeToString(gomono.TTF)))
+}
+
+func TestRasterOnlyExplicitCaptureFont(t *testing.T) {
+	if os.Getenv("VHS_TEST_BROWSER") == "" {
+		t.Skip("set VHS_TEST_BROWSER=1 to run this test")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	v := New()
+	t.Cleanup(func() { _ = v.Cleanup() })
+	v.Options.Shell = Shell{Command: []string{"bash"}}
+	v.Options.Video.Output.GIF = filepath.Join(t.TempDir(), "capture.gif")
+	v.Options.Video.Style.Columns, v.Options.Video.Style.Rows = 30, 8
+	v.Options.FontSize = 20
+	path := filepath.Join(t.TempDir(), "GoMono.ttf")
+	if err := os.WriteFile(path, gomono.TTF, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	v.Options.SVG.FontFile = path
+	t.Setenv("VHS_SVG_FONT_FILE", "invalid-environment-font.ttf")
+	if err := v.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = v.terminate() }()
+	defer func() { _ = v.close() }()
+	if err := v.installSVGFont(); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Setup(); err != nil {
+		t.Fatal(err)
+	}
+	frame, err := CaptureSVGFrame(v.Page, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Options.FontFamily != captureFontFamily || frame.TermCols != 30 || frame.TermRows != 8 {
+		t.Fatalf("raster capture did not select the explicit font before sizing: family=%q grid=%dx%d", v.Options.FontFamily, frame.TermCols, frame.TermRows)
+	}
+	data, err := base64.StdEncoding.DecodeString(v.svgFont.data)
+	if err != nil || !bytes.Equal(data, gomono.TTF) {
+		t.Fatal("raster-only capture did not load the exact explicit bytes")
+	}
+	if v.svgFont.auto || v.svgTitleFont.data != "" {
+		t.Fatal("raster-only explicit capture triggered automatic embedding")
+	}
 }

@@ -52,12 +52,12 @@ func readSVGFont(path string) (svgFont, error) {
 }
 
 func (vhs *VHS) installSVGFont() error {
-	if vhs.Options.Video.Output.SVG == "" {
-		return nil
-	}
 	path := vhs.Options.SVG.FontFile
 	if path == "" {
 		path = os.Getenv("VHS_SVG_FONT_FILE")
+	}
+	if path == "" && vhs.Options.Video.Output.SVG == "" {
+		return nil
 	}
 	ctx := vhs.Page.GetContext()
 	font, err := selectSVGFont(ctx, path, vhs.Options.FontFamily)
@@ -73,6 +73,9 @@ func (vhs *VHS) installSVGFont() error {
 			vhs.svgOriginalFamily = vhs.Options.FontFamily
 		}
 		vhs.Options.FontFamily = captureFontFamily
+	}
+	if vhs.Options.Video.Output.SVG == "" {
+		return nil
 	}
 	style := vhs.Options.Video.Style
 	if style.WindowBar != "" && style.WindowBarTitle != "" && style.WindowBarFontFamily != "" {
