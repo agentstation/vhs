@@ -331,6 +331,14 @@ func (g *SVGGenerator) Generate() string {
 
 	sb.WriteString("</g>") // Close animation container
 	g.writeNewline(&sb)
+
+	// Keep the optional progress bar inside the terminal viewport.
+	if style.ProgressBarColor != "" {
+		_, _ = fmt.Fprintf(&sb, `<rect class="progress-bar" x="0" y="%d" width="%s" height="1" fill="%s"/>`,
+			innerHeight-1, formatCoord(viewBoxWidth), html.EscapeString(style.ProgressBarColor))
+		g.writeNewline(&sb)
+	}
+
 	sb.WriteString("</svg>") // Close inner SVG
 	g.writeNewline(&sb)
 
@@ -1124,6 +1132,15 @@ func (g *SVGGenerator) generateStyles() string {
 		sb.WriteString("@keyframes blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }")
 		g.writeNewline(&sb)
 		_, _ = fmt.Fprintf(&sb, ".%s { animation: blink 1s infinite; }", cursorIdleClass)
+		g.writeNewline(&sb)
+	}
+
+	// Progress bar animation: grows from left to right over the animation duration
+	if g.options.Style != nil && g.options.Style.ProgressBarColor != "" {
+		sb.WriteString("@keyframes progress { from { transform: scaleX(0); } to { transform: scaleX(1); } }")
+		g.writeNewline(&sb)
+		_, _ = fmt.Fprintf(&sb, ".progress-bar { transform-origin: 0 0; animation: progress %ss linear %ss infinite; }",
+			formatDuration(animationDuration), formatDuration(animationDelay))
 		g.writeNewline(&sb)
 	}
 

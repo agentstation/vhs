@@ -513,6 +513,18 @@ func (p *Parser) parseSet() Command {
 				)
 			}
 		}
+	case token.PROGRESS_BAR:
+		cmd.Args = p.peek.Literal
+		p.nextToken()
+
+		progressBar := p.cur.Literal
+
+		hex, hasPrefix := strings.CutPrefix(progressBar, "#")
+		_, err := strconv.ParseUint(hex, 16, 32)
+		if !hasPrefix || err != nil || (len(hex) != 3 && len(hex) != 6 && len(hex) != 8) {
+			p.errors = append(p.errors, NewError(p.cur,
+				"\""+progressBar+"\" is not a valid color. Use #RGB, #RRGGBB, or #RRGGBBAA."))
+		}
 	case token.CURSOR_BLINK:
 		cmd.Args = p.peek.Literal
 		p.nextToken()

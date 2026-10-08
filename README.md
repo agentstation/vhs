@@ -673,6 +673,21 @@ Set CursorBlink false
   <img width="600" alt="Example of setting the cursor blink." src="https://vhs.charm.sh/vhs-3rMCb80VEkaDdTOJMCrxKy.gif">
 </picture>
 
+#### ProgressBar
+
+Add a one-pixel progress bar at the bottom of the SVG terminal viewport:
+
+```elixir
+Set ProgressBar "#9B79FF"
+```
+
+Use a quoted `#RGB`, `#RRGGBB`, or `#RRGGBBAA` hex color. The bar is off by
+default and applies only to SVG output. It uses the terminal animation's
+`PlaybackSpeed` and `LoopOffset` timing.
+
+Browsers animate the bar during playback. Static renderers such as librsvg and
+Inkscape display a full-width bar without playback animation.
+
 ### Type
 
 Use `Type` to emulate key presses. That is, you can use `Type` to script typing
