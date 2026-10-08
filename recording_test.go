@@ -172,7 +172,7 @@ func TestSVGOnlyAvoidsRasterPreparation(t *testing.T) {
 	if v.Options.Video.Output.needsRaster() {
 		t.Fatal("SVG output requests raster capture")
 	}
-	if err := v.Render(); err != nil {
+	if err := v.Render(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(v.Options.Video.Output.SVG)
@@ -233,7 +233,7 @@ func TestRenderReportsEncoderFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin)
-	if err := v.Render(); err == nil {
+	if err := v.Render(t.Context()); err == nil {
 		t.Fatal("encoder failure returned success")
 	}
 }

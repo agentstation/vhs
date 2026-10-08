@@ -9,6 +9,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -83,7 +84,7 @@ func marginFillIsColor(marginFill string) bool {
 }
 
 // makeMedia takes a list of images (as frames) and converts them to a GIF/WebM/MP4.
-func makeMedia(opts VideoOptions, targetFile string) *exec.Cmd {
+func makeMedia(ctx context.Context, opts VideoOptions, targetFile string) *exec.Cmd {
 	if targetFile == "" {
 		return nil
 	}
@@ -91,8 +92,9 @@ func makeMedia(opts VideoOptions, targetFile string) *exec.Cmd {
 	log.Println(GrayStyle.Render("Creating " + targetFile + "..."))
 	ensureDir(targetFile)
 
-	//nolint:gosec,noctx
-	return exec.Command(
+	//nolint:gosec
+	return exec.CommandContext(
+		ctx,
 		"ffmpeg",
 		buildFFopts(opts, targetFile)...,
 	)
@@ -109,7 +111,7 @@ func ensureDir(output string) {
 
 // buildFFopts assembles an ffmpeg command from some VideoOptions.
 func buildFFopts(opts VideoOptions, targetFile string) []string {
-	var args []string
+	var args []string //nolint:prealloc
 	streamCounter := 2
 
 	streamBuilder := NewStreamBuilder(streamCounter, opts.Input, opts.Style)
@@ -155,18 +157,18 @@ func buildFFopts(opts VideoOptions, targetFile string) []string {
 }
 
 // MakeGIF takes a list of images (as frames) and converts them to a GIF.
-func MakeGIF(opts VideoOptions) *exec.Cmd {
-	return makeMedia(opts, opts.Output.GIF)
+func MakeGIF(ctx context.Context, opts VideoOptions) *exec.Cmd {
+	return makeMedia(ctx, opts, opts.Output.GIF)
 }
 
 // MakeWebM takes a list of images (as frames) and converts them to a WebM.
-func MakeWebM(opts VideoOptions) *exec.Cmd {
-	return makeMedia(opts, opts.Output.WebM)
+func MakeWebM(ctx context.Context, opts VideoOptions) *exec.Cmd {
+	return makeMedia(ctx, opts, opts.Output.WebM)
 }
 
 // MakeMP4 takes a list of images (as frames) and converts them to an MP4.
-func MakeMP4(opts VideoOptions) *exec.Cmd {
-	return makeMedia(opts, opts.Output.MP4)
+func MakeMP4(ctx context.Context, opts VideoOptions) *exec.Cmd {
+	return makeMedia(ctx, opts, opts.Output.MP4)
 }
 
 // MakeSVG generates an animated SVG from captured frames.
